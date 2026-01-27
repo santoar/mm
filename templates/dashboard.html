@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Trading Bot Dashboard</title>
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" />
+<!-- jQuery और jQuery UI JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #fafcff;
+}
+.top-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 50px;
+    background: #2b5797;
+    color: white;
+    padding: 0 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 1000;
+    box-shadow: 0 2px 6px rgba(44,87,151,0.08);
+}
+#ist_time {
+    font-weight: bold;
+    font-size: 18px;
+    letter-spacing: 1px;
+    margin-right: 15px;
+}
+button {
+    cursor: pointer;
+    padding: 6px 14px;
+    font-size: 15px;
+    margin-left: 10px;
+    border-radius: 4px;
+    border: 1px solid #007bff;
+    background: #f5faff;
+    color: #007bff;
+    transition: background 0.15s;
+}
+button:hover {
+    background: #e8f0fe;
+}
+.content {
+    margin-top: 60px;
+    padding: 0 28px 20px 28px;
+    max-width: 1250px;
+    margin-left: auto;
+    margin-right: auto;
+}
+#trade_summary {
+    display: flex;
+    gap: 22px;
+    justify-content: flex-start;
+    align-items: center;
+    margin: 32px 0 26px 0;
+    min-height: 60px;
+    flex-wrap: wrap;
+	overflow-x: auto;
+}
+.summary-block {
+    background: white;
+    border: 1.6px solid #007bff;
+    border-radius: 7px;
+    padding: 10px 18px;
+    color: #0f4786;
+    min-width: 145px;
+    text-align: center;
+    font-size: 17px;
+    font-weight: bold;
+    box-shadow: 1px 2px 8px rgba(0, 123, 255, 0.07);
+    margin: 3px 0;
+}
+.section-header {
+    background: #e9ecef;
+    border-radius: 12px 12px 0 0;
+    color: #263849;
+    font-weight: bold;
+    font-size: 26px;
+    padding: 22px 32px;
+    margin-bottom: 0;
+    border-bottom: 1px solid #dadada;
+    letter-spacing: 0.3px;
+}
+
+.position-section {
+    background: #eaf4fb;
+    border-radius: 14px;
+    box-shadow: 0 2px 13px rgba(90,120,155,0.06);
+    margin: 32px 0 36px 0;
+    padding-bottom: 24px;
+}
+.section-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #e9ecef;
+    border-radius: 12px 12px 0 0;
+    color: #263849;
+    font-weight: bold;
+    font-size: 26px;
+    padding: 22px 32px 22px 32px;
+    margin-bottom: 0;
+    border-bottom: 1px solid #dadada;
+    letter-spacing: 0.3px;
+}
+.section-header-row .download-btn-container {
+    display: flex;
+    align-items: center;
+}
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 12px; 
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+}
+thead th:first-child {
+    border-top-left-radius: 12px;
+}	
+thead th:last-child {
+	border-top-right-radius: 12px;
+}
+
+tbody tr:nth-child(odd) td {
+	background-color: #f7faff;
+}
+
+th, td {
+    border: 1px solid #cad4e0;
+    padding: 14px 12px;
+    text-align: center;
+    vertical-align: middle;
+    background-color: white;
+}
+th {
+    background-color: #007bff;
+    color: white;
+    font-size: 16px;
+    letter-spacing: 1px;
+}
+.modal {
+    display: none;
+    position: fixed;
+    top: 16%; left: 50%;
+    transform: translate(-50%, -16%);
+    background: white;
+    border: 1.5px solid #333;
+    padding: 24px;
+    z-index: 2000;
+    width: 410px;
+    max-height: 70vh;
+    overflow-y: auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+}
+.modal input[type="text"],
+.modal input[type="password"] {
+    width: 100%;
+    padding: 7px 9px;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+}
+.modal label {
+    font-weight: bold;
+}
+.modal button {
+    margin-right: 10px;
+    margin-top: 7px;
+}
+#settings_table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+}
+#settings_table th, #settings_table td {
+    border: 1.1px solid #aaa;
+    padding: 7px;
+    text-align: left;
+}
+.modal select {
+    width: 100%;
+    padding: 7px 9px;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+    font-size: 15px;
+    color: #202020;
+}
+
+
+.dropdown-menu {
+    position: absolute;
+    z-index: 10;
+    background: white;
+    border: 1px solid #ccc;
+    padding: 6px 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.16);
+    min-width: 150px;
+    border-radius: 4px;
+}
+.dropdown-menu button,
+.dropdown-menu a {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 15px;
+    color: #202020;
+    text-decoration: none;
+}
+.dropdown-menu button:hover,
+.dropdown-menu a:hover {
+    background-color: #eff4fe;
+}
+.pnl-positive {
+    color: #219a16 !important;
+}
+
+.pnl-negative {
+    color: #e02424 !important;
+}
+#download_closed_positions_btn {
+    margin-bottom: 10px;
+}
+.pending-status {
+    color: orange;
+    font-weight: bold;
+    background-color: #FFF3CD;
+    border-radius: 4px;
+    padding: 2px 6px;
+    text-transform: capitalize;
+}
+
+.failed-status {
+    color: #721C24;
+    font-weight: bold;
+    background-color: #F8D7DA;
+    border-radius: 4px;
+    padding: 2px 6px;
+    text-transform: capitalize;
+}
+
+.open-status {
+    color: #155724;
+    font-weight: bold;
+    background-color: #D4EDDA;
+    border-radius: 4px;
+    padding: 2px 6px;
+    text-transform: capitalize;
+}
+
+.pnl-positive {
+    color: #219a16 !important;
+    font-weight: 600;
+}
+
+.pnl-negative {
+    color: #e02424 !important;
+    font-weight: 600;
+}
+.status-red {
+  color: red !important;
+  font-weight: 400;
+}
+.open-status {
+  color: #32c671 !important;
+  font-weight: 400;
+}
+
+.pending-status {
+  color: #e96f02 !important; 
+  font-weight: 400;
+}
+
+
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+  <div class="top-bar">
+    <div id="ist_time">IST Time: --:--:--</div>
+    <div>
+        <button id="toggle_entry_btn">Enable Entry</button>
+        <button id="settings_btn">⚙️ Settings</button>
+        <button id="reloadSettingsBtn">🔄Reload Settings</button>
+		<button id="resetDeploymentBtn">🔥 Reset Deployment</button> 
+        <div id="reloadStatus"></div>
+    </div>
+</div>
+<div class="content">
+  <div id="trade_summary">
+  <div class="summary-block">Total Trades: <span id="total_trades">...</span></div>
+  <div class="summary-block">Live Positions: <span id="live_positions">...</span></div>
+  <div class="summary-block">Closed Positions: <span id="closed_positions">...</span></div>
+  <div class="summary-block">Total PNL: <span id="total_pnl">0</span></div>
+  <div class="summary-block">Entry Enabled: <span id="entry_enabled">...</span></div>
+</div>
+<div class="position-section">
+      <div class="section-header">Open Positions</div>
+      <table id="open_positions_table">
+          <thead>
+              <tr>
+                  <th>Timestamp</th>
+                  <th>Symbol</th>
+				  <th>Trading Symbol</th>
+                  <th>Option Type</th>
+                  <th>Strike Price</th>
+                  <th>Quantity</th>
+                  <th>Lot Size</th>
+				  <th>Entry Time</th>
+                  <th>Used Capital</th>
+                  <th>Entry Price</th>
+                  <th>LTP</th>
+                  <th>PNL</th>
+                  <th>Order Status</th>
+                  <th>Exit</th>
+              </tr>
+          </thead>
+          <tbody></tbody>
+      </table>
+    </div>
+    <div class="position-section">
+  <div class="section-header-row">
+    <span>Closed Positions</span>
+    <span class="download-btn-container">
+      <button id="download_closed_positions_btn">
+        <svg width="20" height="20" fill="#007bff" style="vertical-align: middle; margin-right: 6px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+          <path fill="#007bff" d="M10 14a1 1 0 0 1-.707-.293l-4-4a1 1 0 0 1 1.414-1.414L9 10.586V3a1 1 0 1 1 2 0v7.586l2.293-2.293a1 1 0 0 1 1.414 1.414l-4 4A1 1 0 0 1 10 14z"/>
+          <path fill="#007bff" d="M4 16a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1z"/>
+        </svg>
+        Download Data
+      </button>
+    </span>
+  </div>
+  <table id="closed_positions_table">
+          <thead>
+              <tr>
+                  <th>Symbol</th>
+				  <th>Trading Symbol</th>
+                  <th>Option Type</th>
+                  <th>Strike Price</th>
+                  <th>Quantity</th>
+				  <th>Lot Size</th>
+                  <th>Entry Time</th>
+                  <th>Exit Time</th>
+                  <th>Entry Price</th>
+                  <th>Exit Price</th>
+                  <th>PNL</th>
+                  <th>Order Status</th>
+              </tr>
+          </thead>
+          <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
+
+<!-- Settings Modal -->
+<div id="settings_modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings_title">
+    <h3 id="settings_title">Settings (Protected)</h3>
+
+    <label for="auth_username">Username (Optional):</label>
+    <input type="text" id="auth_username" placeholder="Username (optional)" value="admin">
+
+    <label for="settings_password">Password:</label>
+    <input type="password" id="settings_password" placeholder="Enter password">
+	
+	<button id="load_settings_btn">Load Settings</button>
+    <table id="settings_table" aria-describedby="settings_desc" role="grid" aria-readonly="true"></table>
+
+    <button id="save_settings_btn">Save</button>
+    <button id="cancel_settings_btn">Cancel</button>
+
+    <div id="settings_msg" role="alert" style="margin-top: 10px;"></div>
+</div>
+
+<script>
+
+document.addEventListener("DOMContentLoaded", () => {
+// IST Clock Update
+function updateISTTime() {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const ist = new Date(utc + 5.5 * 60 * 60000);
+    document.getElementById("ist_time").textContent = "IST Time: " + ist.toLocaleTimeString("en-IN");
+}
+// UTC to IST converter function
+function convertUTCtoIST(utcDateString) {
+    // (2025-09-15T12:30:00) jaisa ISO utc string aayega
+    const utcDate = new Date(utcDateString + 'Z'); // Z denotes UTC
+    const istOffset = 5.5 * 60; // IST offset in minutes
+    const istTime = new Date(utcDate.getTime() + istOffset * 60000);
+    return istTime.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+setInterval(updateISTTime, 5000);
+updateISTTime();
+
+// Basic Auth header generator
+function getBasicAuthHeader(username, password) {
+    if (!username) username = "";
+    const token = btoa(username + ":" + password);
+    return "Basic " + token;
+}
+
+// Update PNL color based on value
+function updateTotalPNL(value) {
+    const pnlElem = document.querySelector('#trade_summary .summary-block:nth-child(4)'); 
+    if (!pnlElem) return;
+    pnlElem.textContent = `Total PNL: ${parseFloat(value).toFixed(2)}`;
+	pnlElem.classList.remove('pnl-positive', 'pnl-negative');
+    if (parseFloat(value) > 0) {
+		pnlElem.classList.add('pnl-positive');
+	} else if (parseFloat(value) < 0) {
+		pnlElem.classList.add('pnl-negative');
+	}
+}
+
+// Load trade summary
+async function fetchSummary() {
+    try {
+        const resp = await fetch("/dashboard/summary");
+        const data = await resp.json();
+        document.getElementById("trade_summary").innerHTML = `
+            <div class="summary-block">Total Trades: ${data.total_trades}</div>
+            <div class="summary-block">Live Positions: ${data.live_positions}</div>
+            <div class="summary-block">Closed Positions: ${data.closed_positions}</div>
+            <div class="summary-block">Total PNL: ${data.total_pnl.toFixed(2)}</div>
+            <div class="summary-block">Entry Enabled: ${data.entry_enabled}</div>
+        `;
+        updateToggleButtonText(data.entry_enabled === "true");
+        updateTotalPNL(data.total_pnl);
+    } catch (e) {
+        console.error("Error fetching summary", e);
+    }
+}
+
+// Capitalize first letter utility
+function capitalizeFirst(text) {
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
+// Load position data with PNL and LTP color coding
+async function loadPositions() {
+  try {
+    const openResp = await fetch("/positions/live");
+    const respJson = await openResp.json();
+    const openData = [
+	  ...(respJson.live_positions || []),
+	  ...(respJson.paper_positions || [])
+	];
+
+    const tbodyOpen = document.querySelector("#open_positions_table tbody");
+    tbodyOpen.innerHTML = "";
+
+    openData.forEach(trade => {
+      const tr = document.createElement("tr");
+
+      let statusRaw = (trade.order_status || "").trim();
+      let statusLower = statusRaw.toLowerCase();
+      let statusText = capitalizeFirst(statusRaw);
+      let statusClass = "";
+      let exitDisabled = "";
+
+      if (statusLower === "pending" || statusLower === "transit") {
+        statusClass = "pending-status";
+        exitDisabled = "disabled";
+      } else if (["failed", "cancelled", "rejected", "closed"].includes(statusLower)) {
+        statusClass = "status-red";
+        exitDisabled = "disabled";
+      } else if (statusLower === "open") {
+        statusClass = "open-status";
+      }
+
+      tr.innerHTML = `
+        <td>${trade.timestamp || ""}</td>
+        <td>${trade.symbol || ""}</td>
+		<td>${trade.trading_symbol || ""}</td>
+        <td>${trade.option_type || ""}</td>
+        <td>${trade.strike || ""}</td>
+        <td>${trade.quantity || ""}</td>
+		<td>${trade.lot_size || ""}</td>
+        <td>${trade.entry_time || ""}</td>
+        <td>${parseFloat(trade.capital_used || 0).toFixed(2)}</td>
+        <td>${parseFloat(trade.entry_price || 0).toFixed(2)}</td>
+        <td id="ltp_${trade.option_security_id}" class="ltp">${parseFloat(trade.ltp || 0).toFixed(2)}</td>
+        <td class="pnl">${parseFloat(trade.pnl || 0).toFixed(2)}</td>
+        <td class="${statusClass}">${trade.order_status || ""}</td>
+        <td><button class="exit_btn" 
+          data-symbol="${trade.symbol}" 
+          data-option-type="${trade.option_type}" 
+          data-strike="${trade.strike}" 
+          type="button" ${exitDisabled}>Exit</button></td>
+      `;
+
+      // Color code LTP and PNL
+      const ltpVal = parseFloat(trade.ltp || 0);
+      const entryPrice = parseFloat(trade.entry_price || 0);
+      const ltpCell = tr.querySelector('.ltp');
+      if (ltpVal > entryPrice) { ltpCell.classList.add('pnl-positive'); }
+      else if (ltpVal < entryPrice) { ltpCell.classList.add('pnl-negative'); }
+
+      const pnlVal = parseFloat(trade.pnl || 0);
+      const pnlCell = tr.querySelector('.pnl');
+      if (pnlVal > 0) { pnlCell.classList.add('pnl-positive'); }
+      else if (pnlVal < 0) { pnlCell.classList.add('pnl-negative'); }
+
+      tbodyOpen.appendChild(tr);
+    });
+
+    const closedResp = await fetch("/positions/closed");
+    const closedData = await closedResp.json();
+    console.log('Closed positions:', closedData);
+	const tbodyClosed = document.querySelector("#closed_positions_table tbody");
+    tbodyClosed.innerHTML = "";
+
+    closedData.forEach(trade => {
+      const tr = document.createElement("tr");
+
+      let statusText = capitalizeFirst(trade.order_status || "");
+      let statusClass = "";
+      if (["Closed", "Failed"].includes(statusText)) {
+        statusClass = "status-red";
+      }
+
+      tr.innerHTML = `
+        <td>${trade.symbol || ""}</td>
+		<td>${trade.trading_symbol || ""}</td>
+        <td>${trade.option_type || ""}</td>
+        <td>${trade.strike_price || trade.strike || ""}</td>
+        <td>${trade.quantity || ""}</td>
+		<td>${trade.lot_size || ""}</td>
+        <td>${trade.entry_time || ""}</td>
+        <td>${trade.exit_time || ""}</td>
+        <td>${parseFloat(trade.entry_price || 0).toFixed(2)}</td>
+        <td>${parseFloat(trade.exit_price || trade.exit_price || 0).toFixed(2)}</td>
+        <td class="pnl">${parseFloat(trade.pnl || 0).toFixed(2)}</td>
+        <td class="${statusClass}">${statusText}</td>
+      `;
+
+      // Color code Closed PNL
+      const pnlVal = parseFloat(trade.pnl || 0);
+      const pnlCell = tr.querySelector('.pnl');
+      if (pnlVal > 0) { pnlCell.classList.add('pnl-positive'); }
+      else if (pnlVal < 0) { pnlCell.classList.add('pnl-negative'); }
+
+      tbodyClosed.appendChild(tr);
+    });
+
+  } catch (e) {
+    console.error("Error loading positions", e);
+  }
+}
+
+fetchSummary();
+setInterval(loadPositions, 5000);
+
+// Exit button handler here as before, unchanged
+
+
+async function downloadClosedPositionsCSV() {
+    try {
+        const response = await fetch('/positions/closed');
+        const data = await response.json();
+
+        if (!data.length) {
+            alert("No closed positions to download.");
+            return;
+        }
+
+        const headers = Object.keys(data[0]);
+        const csvRows = [];
+
+        csvRows.push(headers.join(','));
+
+        for (const row of data) {
+            const values = headers.map(header => {
+                const escaped = ('' + (row[header] ?? '')).replace(/"/g, '""');
+                return `"${escaped}"`;
+            });
+            csvRows.push(values.join(','));
+        }
+
+        const csvString = csvRows.join('\n');
+        const blob = new Blob([csvString], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.setAttribute('hidden', '');
+        a.setAttribute('href', url);
+        a.setAttribute('download', 'closed_positions.csv');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+    } catch (err) {
+        alert('Error downloading CSV: ' + err.message);
+    }
+}
+
+
+// Toggle Entry Button
+const toggleEntryBtn = document.getElementById("toggle_entry_btn");
+toggleEntryBtn.addEventListener("click", async () => {
+    const enabled = toggleEntryBtn.textContent === "Enable Entry";
+    try {
+        const resp = await fetch("/toggle_entry", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ enable: enabled })
+        });
+        const data = await resp.json();
+        if (resp.ok && (data.status === "success" || data.status === "Entry toggled")) {
+            updateToggleButtonText(data.entry_enabled === "true" || data.entry_enabled === true);
+            fetchSummary();
+        } else {
+            alert("Entry toggle failed: " + (data.error || data.message || "Unknown error"));
+        }
+    } catch (err) {
+        alert("Entry toggle error: " + err.message);
+    }
+});
+
+function updateToggleButtonText(enabled) {
+    toggleEntryBtn.textContent = enabled ? "Disable Entry" : "Enable Entry";
+}
+
+
+// *** ADD polling here: loadPositions every 5 seconds ***
+setInterval(loadPositions, 5000);
+
+// Exit button no confirmation, single click
+document.querySelector("#open_positions_table tbody").addEventListener("click", async (e) => {
+    if (e.target.classList.contains("exit_btn")) {
+        const symbol = e.target.getAttribute("data-symbol");
+        const option_type = e.target.getAttribute("data-option-type");
+        const strike = e.target.getAttribute("data-strike");
+        if (!symbol || !option_type || !strike)
+            return alert("Missing symbol, option_type or strike");
+
+        const resp = await fetch("/positions/exit", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ symbol, option_type, strike: Number(strike) })
+        });
+        const result = await resp.json();
+        if (resp.ok) {
+            await loadPositions();   
+            await fetchSummary();   
+        } else {
+            alert(result.error || "Failed to exit position");
+        }
+    }
+});
+
+
+let positionUpdateTimeout = null;
+function schedulePositionUpdate() {
+    if (positionUpdateTimeout) return;
+    positionUpdateTimeout = setTimeout(() => {
+        loadPositions();
+        fetchSummary();
+        positionUpdateTimeout = null;
+    }, 1000); 
+}
+
+// WebSocket Events handling
+const socket = io("https://dhan-bot-service-191990903975.europe-west1.run.app/io", {
+    path: "/socket.io",
+    transports: ["websocket", "polling"],
+	reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    randomizationFactor: 0.5
+});
+
+socket.on("ltp_update", data => {
+    console.log("LTP update received:", data);
+    for (const key in data) {
+		console.log("LTP element found?", document.getElementById(`ltp_${key}`));
+
+        const ltpElem = document.getElementById(`ltp_${key}`);
+        const pnlElem = document.getElementById(`pnl_${key}`);
+        if (ltpElem && typeof data[key].ltp === "number") {
+            ltpElem.textContent = data[key].ltp.toFixed(2);
+        }
+        if (pnlElem && typeof data[key].pnl === "number") {
+            pnlElem.textContent = data[key].pnl.toFixed(2);
+        }
+    }
+});
+socket.on('connect', () => {
+  console.log("WebSocket connected");
+});
+socket.on('message', (data) => {
+  console.log("WebSocket message received:", data);
+});
+socket.on('disconnect', () => {
+  console.log("WebSocket disconnected");
+});
+socket.on("new_position", () => {
+    loadPositions();
+    fetchSummary();
+});
+socket.on("position_exited", () => {
+    loadPositions();
+    fetchSummary();
+});
+socket.on("entry_toggle", (data) => {
+    updateToggleButtonText(data.entry_enabled === "true" || data.entry_enabled === true);
+    fetchSummary();
+});
+
+// Settings Modal Logic
+function getBasicAuthHeader(username, password) {
+    if (!username) username = "";
+    const token = btoa(username + ":" + password);
+    return "Basic " + token;
+}
+const settingsBtn = document.getElementById("settings_btn");
+const settingsModal = document.getElementById("settings_modal");
+const loadSettingsBtn = document.getElementById("load_settings_btn");
+const saveSettingsBtn = document.getElementById("save_settings_btn");
+const cancelSettingsBtn = document.getElementById("cancel_settings_btn");
+const settingsMsg = document.getElementById("settings_msg");
+const authUsernameInput = document.getElementById("auth_username");
+const passwordInput = document.getElementById("settings_password");
+
+settingsBtn.addEventListener("click", () => {
+    authUsernameInput.value = ""; 
+    passwordInput.value = "";  
+    settingsMsg.textContent = "";
+    document.getElementById("settings_table").innerHTML = "";
+    settingsModal.style.display = "block";
+
+    loadSettingsBtn.click();
+});
+
+
+
+function createInputField(key, val) {
+    if (key === "entry_enabled" || key === "paper_trade") {
+        return `
+        <select data-key="${key}">
+            <option value="true" ${val === "true" ? "selected" : ""}>true</option>
+            <option value="false" ${val === "false" ? "selected" : ""}>false</option>
+        </select>`;
+    } else if (key === "expiry_selection") {
+        return `
+        <select data-key="${key}">
+            <option value="current" ${val === "current" ? "selected" : ""}>current</option>
+            <option value="next" ${val === "next" ? "selected" : ""}>next</option>
+        </select>`;
+    } else if (key === "expiry_date") {
+        return `<input type="text" id="expiry_date_input" data-key="${key}" value="${val}">`;
+    } else {
+        return `<input type="text" data-key="${key}" value="${val}">`;
+    }
+}
+
+
+loadSettingsBtn.addEventListener("click", async () => {
+    const username = authUsernameInput.value.trim();
+    const password = passwordInput.value.trim();
+
+    if (!username) {
+        settingsMsg.textContent = "Username is required to load settings.";
+        authUsernameInput.focus();
+        return;
+    }
+    if (!password) {
+        settingsMsg.textContent = "Password is required to load settings.";
+        passwordInput.focus();
+        return;
+    }
+
+    settingsMsg.textContent = "";  
+
+    try {
+        let resp = await fetch("/settings", {
+            headers: {
+                "Authorization": getBasicAuthHeader(username, password)
+            }
+        });
+        if (!resp.ok) throw new Error("Failed to load settings");
+        let settings = await resp.json();
+        const table = document.getElementById("settings_table");
+        table.innerHTML = `
+            <thead>
+                <tr><th>Setting Key</th><th>Value</th></tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const tbody = table.querySelector("tbody");
+        Object.entries(settings).forEach(([key, val]) => {
+            if (key.toUpperCase() === "USERNAME" || key.toUpperCase() === "PASSWORD") return;
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${key}</td><td>${createInputField(key, val)}</td>`;
+            tbody.appendChild(tr);
+        });
+
+        setTimeout(function() {
+            if (document.getElementById("expiry_date_input")) {
+                $("#expiry_date_input").datepicker({
+                    dateFormat: "mm/dd/yy",
+                    onSelect: function(dateText) {
+                        $(this).val(dateText);
+                    }
+                });
+            }
+        }, 0);
+
+    } catch (err) {
+        alert("Could not load settings: " + err.message);
+        settingsModal.style.display = "none";
+    }
+});
+saveSettingsBtn.addEventListener("click", async () => {
+    const username = authUsernameInput.value.trim();
+    const password = passwordInput.value.trim();
+
+    if (!password) {
+        settingsMsg.style.color = "red";
+        settingsMsg.textContent = "Password is required.";
+        return;
+    }
+
+    const fields = document.querySelectorAll("#settings_table tbody [data-key]");
+	let updatedSettings = {};
+	fields.forEach(field => {
+		if (field.tagName === "SELECT") {
+			updatedSettings[field.getAttribute("data-key")] = field.value;
+		} else {
+			updatedSettings[field.getAttribute("data-key")] = field.value.trim();
+		}
+	});
+
+    try {
+        const resp = await fetch("/settings", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": getBasicAuthHeader(username, password)
+            },
+            body: JSON.stringify(updatedSettings)
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            settingsMsg.style.color = "green";
+            settingsMsg.textContent = "Settings saved successfully.";
+            setTimeout(() => settingsModal.style.display = "none", 1500);
+        } else {
+            settingsMsg.style.color = "red";
+            settingsMsg.textContent = data.error || "Failed to save settings.";
+        }
+    } catch (err) {
+        settingsMsg.style.color = "red";
+        settingsMsg.textContent = "Error saving settings.";
+		console.error("Save settings failed:", err);
+    }
+});
+const reloadBtn = document.getElementById("reloadSettingsBtn");
+if (reloadBtn) {
+    reloadBtn.addEventListener("click", async () => {
+        console.log("Reload button clicked");
+        try {
+            const resp = await fetch("/reload_settings", { method: "POST" });
+            console.log("Fetch sent, response status:", resp.status);
+            if (!resp.ok) throw new Error("Failed to reload settings, status: " + resp.status);
+            const data = await resp.json();
+            console.log("Reload response:", data);
+            alert("Settings reloaded successfully");
+        } catch (err) {
+            console.error("Reload failed:", err);
+            alert("Failed to reload settings");
+        }
+    });
+} else {
+    console.error("Reload Settings button not found");
+}
+
+
+
+document.getElementById('resetDeploymentBtn').addEventListener('click', async () => {
+    const username = prompt("Enter admin username:");
+    const password = prompt("Enter admin password:");
+    if (!username || !password) {
+        alert("Username/Password required!");
+        return;
+    }
+    if (!confirm("Are you sure you want to reset?")) return;
+    try {
+        const resp = await fetch('/reset_deployment', {
+            method: "POST",
+            headers: {
+                "Authorization": "Basic " + btoa(username + ":" + password)
+            }
+        });
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch { alert("Raw Response: " + text); return; }
+        alert(data.status || data.error || "Reset completed.");
+    } catch (err) {
+        alert("Reset failed: " + err.message);
+    }
+});
+
+// Cancel modal
+cancelSettingsBtn.addEventListener("click", () => {
+    settingsModal.style.display = "none";
+});
+//CSV Download Event Listener
+document.getElementById('download_closed_positions_btn').addEventListener('click', downloadClosedPositionsCSV);
+});
+</script>
+
+</body>
+</html>

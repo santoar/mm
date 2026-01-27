@@ -1,0 +1,22 @@
+pip install requests
+pip install websockets
+pip install pandas
+pip install Flask
+pip install supabase
+pip install Flask-SocketIO
+
+
+
+curl -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -d "{\"symbol\":\"INFY\",\"action\":\"BUY\",\"option_type\":\"CE\",\"price\":\"700.00\",\"qty\":1}"
+
+
+
+
+
+{{strategy.order.alert_message}}
+
+
+
+
+
+
