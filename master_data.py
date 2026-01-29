@@ -77,59 +77,57 @@ def load_master_data(force_reload=False):
     option_symbol_to_id.clear()
     option_cache.clear()
     
-    logger.info("Starting to fetch latest master data CSV...")
-    fetch_live_master_data_direct()
-    logger.info(f"Reading master data from file: {MASTER_CSV_FILE}")
-    df_master = pd.read_csv(MASTER_CSV_FILE, low_memory=False)
-    logger.info(f"Master CSV loaded: {df_master.shape[0]} rows, {df_master.shape[1]} columns")
+    index_symbol_to_id["NIFTY"] = "13"
+    logger.info("Manually initialized NIFTY Index ID to 13")
+    
+    try:
+        logger.info("Starting to fetch latest master data CSV...")
+        fetch_live_master_data_direct()
+        logger.info(f"Reading master data from file: {MASTER_CSV_FILE}")
+        df_master = pd.read_csv(MASTER_CSV_FILE, low_memory=False)
+        logger.info(f"Master CSV loaded: {df_master.shape[0]} rows, {df_master.shape[1]} columns")
     
     
-    index_symbols = df_master[
-        (df_master['EXCH_ID'] == 'NSE') & 
-        (df_master['SEGMENT'] == 'I') & 
-        (df_master['INSTRUMENT_TYPE'] == 'INDEX') & 
-        (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
-    ]
-    index_symbol_to_id.update(index_symbols.set_index('UNDERLYING_SYMBOL')['SECURITY_ID'].to_dict())
-    logger.info(f"Loaded {len(index_symbol_to_id)} index symbols")
+        index_symbols = df_master[
+            (df_master['EXCH_ID'] == 'NSE') & 
+            (df_master['SEGMENT'] == 'I') & 
+            (df_master['INSTRUMENT_TYPE'] == 'INDEX') & 
+            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
+        ]
+        index_symbol_to_id.update(index_symbols.set_index('UNDERLYING_SYMBOL')['SECURITY_ID'].to_dict())
     
-    option_df = df_master[
-        (df_master['EXCH_ID'] == 'NSE') & 
-        (df_master['SEGMENT'] == 'D') & 
-        (df_master['INSTRUMENT'] == 'OPTIDX') & 
-        (df_master['INSTRUMENT_TYPE'] == 'OP') & 
-        (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
-    ].copy()
-    logger.debug(f"option_df shape: {option_df.shape}")
+        option_df = df_master[
+            (df_master['EXCH_ID'] == 'NSE') & 
+            (df_master['SEGMENT'] == 'D') & 
+            (df_master['INSTRUMENT'] == 'OPTIDX') & 
+            (df_master['INSTRUMENT_TYPE'] == 'OP') & 
+            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
+        ].copy()
     
-    if expiry_date:
-        option_df['SM_EXPIRY_DATE'] = pd.to_datetime(option_df['SM_EXPIRY_DATE'], errors='coerce').dt.date
-        option_df = option_df[option_df['SM_EXPIRY_DATE'] == expiry_date]
-        logger.info(f"Filtered option contracts by expiry {expiry_date}, count: {option_df.shape[0]}")
-    else:
-        logger.warning("Expiry date not set, loading all option contracts.")
     
-    option_symbol_to_id.update(
-        {str(k).strip().upper(): int(v) for k, v in option_df.set_index('SYMBOL_NAME')['SECURITY_ID'].to_dict().items()}
-    )
+        if expiry_date:
+            option_df['SM_EXPIRY_DATE'] = pd.to_datetime(option_df['SM_EXPIRY_DATE'], errors='coerce').dt.date
+            option_df = option_df[option_df['SM_EXPIRY_DATE'] == expiry_date]
+            logger.info(f"Filtered option contracts by expiry {expiry_date}, count: {option_df.shape[0]}")
     
-    for _, row in option_df.iterrows():
-        expiry_str = pd.to_datetime(row['SM_EXPIRY_DATE'], errors='coerce').strftime('%Y-%m-%d')
-        key = (
-            row['UNDERLYING_SYMBOL'].strip().upper(),
-            expiry_str,
-            row['OPTION_TYPE'].strip().upper(),
-            float(row['STRIKE_PRICE'])
+        option_symbol_to_id.update(
+            {str(k).strip().upper(): int(v) for k, v in option_df.set_index('SYMBOL_NAME')['SECURITY_ID'].to_dict().items()}
         )
-        option_cache[key] = {
-            'SECURITY_ID': int(row['SECURITY_ID']),
-            'SYMBOL_NAME': row['SYMBOL_NAME'].strip().upper(),
-            'LOT_SIZE': int(row.get('LOT_SIZE', 1))
-        }
-    preprocess_option_map(option_df)
     
-    logging.info(f"Loaded {len(index_symbol_to_id)} index symbols")
-    logger.info(f"Loaded {len(option_symbol_to_id)} option contracts")
+        for _, row in option_df.iterrows():
+            expiry_str = pd.to_datetime(row['SM_EXPIRY_DATE'], errors='coerce').strftime('%Y-%m-%d')
+            key = (row['UNDERLYING_SYMBOL'].strip().upper(), expiry_str, row['OPTION_TYPE'].strip().upper(), float(row['STRIKE_PRICE']))
+            option_cache[key] = {
+                'SECURITY_ID': int(row['SECURITY_ID']),
+                'SYMBOL_NAME': row['SYMBOL_NAME'].strip().upper(),
+                'LOT_SIZE': int(row.get('LOT_SIZE', 1))
+            }
+        preprocess_option_map(option_df)
+        
+    except Exception as e:
+        logger.error(f"Critical error loading CSV: {e}. Bot will use manual NIFTY ID '13'.")
+
+    logger.info(f"Final Loaded Index IDs: {index_symbol_to_id}")
 
 def preprocess_option_map(option_df):
     

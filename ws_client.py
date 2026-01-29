@@ -63,18 +63,17 @@ def refresh_active_option_ids(app):
 print_counter = 0
 
 last_printed_ltp = {}
+
 def decode_message(msg_bytes):
     global print_counter
     try:
         if len(msg_bytes) < 8:
             return
 
-        # Documentation Header: Byte 0 is Response Code, Byte 4-7 is Security ID
         resp_code = msg_bytes[0]
         security_id = struct.unpack('<i', msg_bytes[4:8])[0]
         security_id_str = str(security_id)
 
-        # Dhan Documentation: Code 2 = Ticker, Code 4 = Quote
         if resp_code in [2, 3, 4]: 
             ltp = round(struct.unpack('<f', msg_bytes[8:12])[0], 2)
             market_data_cache[security_id_str] = ltp
@@ -88,7 +87,7 @@ def decode_message(msg_bytes):
                 
                 last_printed_ltp[security_id_str] = ltp
             if socketio:
-                # Emit for Nifty or Active Trades
+                
                 if security_id_str == '13' or security_id_str in active_option_ids:
                     socketio.emit(
                         'ltp_update',
@@ -101,15 +100,19 @@ def decode_message(msg_bytes):
 
     
 
-async def subscribe_and_listen(ws_url, app):
+async def subscribe_and_listen(app): 
     last_subscribed_ids = set()
     last_db_check_time = 0 
-    check_interval = 10 # 10 seconds check
+    check_interval = 10 
     
     while True:
         try:
+            token = get_dhan_access_token(app)
+            client_id = get_dhan_client_id(app)
+            ws_url = f"wss://api-feed.dhan.co?version=2&token={token}&clientId={client_id}&authType=2"
+            
             async with websockets.connect(ws_url) as ws:
-                print("[INFO] WebSocket connected successfully")
+                print("[INFO] WebSocket connected successfully with fresh token")
                 last_subscribed_ids = set()
                 
                 while True:
@@ -118,14 +121,16 @@ async def subscribe_and_listen(ws_url, app):
                         refresh_active_option_ids(app)
                         last_db_check_time = current_time
 
-                    # Combine Nifty ID (13) with active trades
                     index_ids = {str(sid) for sid in index_symbol_to_id.values() if sid}
+                    if not index_ids:
+                        index_ids = {"13"} 
+                    
                     combined_ids = active_option_ids.union(index_ids)
 
                     if combined_ids and (combined_ids != last_subscribed_ids):
                         instrument_list = []
                         for sid in combined_ids:
-                            # NIFTY 50 (13) ke liye segment check
+                            
                             seg = "IDX_I" if sid == "13" else "NSE_FNO"
                             instrument_list.append({
                                 "ExchangeSegment": seg,
@@ -149,23 +154,14 @@ async def subscribe_and_listen(ws_url, app):
                         await ws.ping()
                         
         except Exception as e:
-            print(f"[ERROR] Connection lost: {e}. Retrying...")
+            print(f"[ERROR] Connection lost: {e}. Retrying with fresh credentials in 5s...")
             await asyncio.sleep(5)
 
 def start_ws_loop(app):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    token = get_dhan_access_token(app)
-    client_id = get_dhan_client_id(app)
-        
-    if not token or not client_id:
-        print("Missing token or client_id, WebSocket client not started.")
-        return
-
-    ws_url = f"wss://api-feed.dhan.co?version=2&token={token}&clientId={client_id}&authType=2"
-    print(f"[INFO] Connecting to WebSocket URL: {ws_url}")
-    loop.run_until_complete(subscribe_and_listen(ws_url, app)) 
+    loop.run_until_complete(subscribe_and_listen(app)) 
 
 
 def start_ws_thread(app):
