@@ -126,6 +126,9 @@ def handle_exit(symbol, option_type=None, strike=None):
 def update_atm_option_cache_for_symbol(symbol, ltp, expiry, strike_selection=0):
    
     try:
+        from ws_client import subscribe_symbols
+        new_ids_to_subscribe = []
+        
         ce_sec_id, ce_strike, ce_symbol = find_option_security_id_fast(symbol, expiry, ltp, 'CE', strike_selection)
         if ce_sec_id:
             atm_option_security_cache[(symbol, "CE")] = {
@@ -133,7 +136,8 @@ def update_atm_option_cache_for_symbol(symbol, ltp, expiry, strike_selection=0):
                 'STRIKE': ce_strike,
                 'SYMBOL_NAME': ce_symbol
             }
-
+            new_ids_to_subscribe.append(str(ce_sec_id))
+            
         pe_sec_id, pe_strike, pe_symbol = find_option_security_id_fast(symbol, expiry, ltp, 'PE', strike_selection)
         if pe_sec_id:
             atm_option_security_cache[(symbol, "PE")] = {
@@ -141,6 +145,11 @@ def update_atm_option_cache_for_symbol(symbol, ltp, expiry, strike_selection=0):
                 'STRIKE': pe_strike,
                 'SYMBOL_NAME': pe_symbol
             }
+            new_ids_to_subscribe.append(str(pe_sec_id))
+        if new_ids_to_subscribe:
+            subscribe_symbols(new_ids_to_subscribe) 
+            logging.info(f"Subscribed ATM Options for {symbol}: {new_ids_to_subscribe}")
+        
         print(f"ATM Cached for {symbol}: CE Security ID = {ce_sec_id}, PE Security ID = {pe_sec_id}")
         logging.info(f"Cached ATM options for {symbol}: CE {ce_sec_id}, PE {pe_sec_id}")
     except Exception as e:
@@ -881,6 +890,7 @@ def webhook():
         if not expiry_date:
             return jsonify({"error": "No valid expiry found"}), 400
         
+        # 3. Calculate Option Security ID
         option_info = atm_option_security_cache.get((symbol, option_type))
         if option_info:
             opt_sec_id = option_info['SECURITY_ID']
@@ -889,21 +899,27 @@ def webhook():
         else:
             opt_sec_id, sel_strike, full_opt_symbol = find_option_security_id_fast(symbol, expiry_date, index_ltp, option_type, strike_sel)
         
+        from shared_objects import market_data_cache
+        from ws_client import subscribe_symbols
+
+        ltp = market_data_cache.get(str(opt_sec_id))
+        
+        if not ltp:
+            subscribe_symbols([str(opt_sec_id)])
+            time.sleep(0.5) 
+            ltp = market_data_cache.get(str(opt_sec_id))
+
+        if ltp and float(ltp) > 0:
+            rounded_price = round_to_0_05(float(ltp))
+            logging.info(f"LTP Found: {rounded_price} for {opt_sec_id}")
+        else:
+            return jsonify({"error": "LTP not available in WebSocket. Order skipped."}), 429
+        
+        entry_price = rounded_price 
+                
         lot_size = get_lot_size(symbol, expiry_date, sel_strike, option_type)
         total_quantity = lot_size * quantity
        
-        best_bid, best_ask = get_best_bid_ask(opt_sec_id)
-        #logging.info(f"Best Bid: {best_bid}, Best Ask: {best_ask} for security {opt_sec_id}")
-
-        if best_bid is None or best_ask is None or best_bid == 0 or best_ask == 0:
-            return jsonify({"error": "Invalid market depth prices received. Cannot calculate capital."}), 400
-
-        avg_price = (best_bid + best_ask) / 2
-        rounded_price = round_to_0_05(avg_price)
-
-        if rounded_price == 0:
-            return jsonify({"error": "Rounded entry price is zero, possibly invalid data."}), 400
-
         estimated_trade_capital = rounded_price * total_quantity
         resp = supabase.table("trade_log")\
             .select("capital_used")\
@@ -921,60 +937,36 @@ def webhook():
         
         if trade_type == "live":
             try:
+                # Direct Limit Order fire karein entry_price par
                 order_resp = place_order_with_confirmation(opt_sec_id, "BUY", total_quantity)
                 if not order_resp or not order_resp.get("orderId"):
-                    return jsonify({"error": "Order placement failed or missing orderId"}), 500
-                                    
-                capital_used = rounded_price * total_quantity   
-                return jsonify({
-                    "status": f"Order placed; awaiting confirmation for {option_type} option",
-                    "symbol": symbol,
-                    "trading_symbol": full_opt_symbol,
-                    "order_status": "pending",
-                    "entry_price": rounded_price,
-                    "quantity": total_quantity,
-                    "order_id": order_resp.get("orderId")
-                }), 200
+                    return jsonify({"error": "Order placement failed"}), 500
+                return jsonify({"status": "Success", "order_id": order_resp.get("orderId")}), 200
             except Exception as e:
-                logging.error(f"Error in order placement or saving trade data: {e}")
-                return jsonify({"error": "Internal server error"}), 500
+                logging.error(f"Order error: {e}")
+                return jsonify({"error": "Internal error"}), 500
         
-        elif trade_type == "paper":
-            actual_quantity = int(quantity) * int(lot_size)
+        else: # Paper Trade
             trade_data = {
-                "timestamp": get_current_ist_time().strftime("%Y-%m-%d"),
+                "timestamp": today_date,
                 "symbol": symbol,
                 "trading_symbol": full_opt_symbol,
                 "option_type": option_type,
                 "strike": int(sel_strike),
                 "quantity": int(quantity),
                 "lot_size": int(lot_size),
-                "trade_type": trade_type,  
-                "order_status": "open",    
-                "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
-                "entry_price": rounded_price,
-                "exit_price": 0.0,
-                "exit_time": "00:00:00",
-                "reason": "",
-                "pnl": None,
-                "capital_used": rounded_price * lot_size * quantity,
-                "option_security_id": int(opt_sec_id),
-                "order_id": None
-            }
-            trade_record_id = save_or_update_trade_data(trade_data)  
-            
-            if not trade_record_id:
-                return jsonify({"error": "Failed to save paper trade data"}), 500
-            socketio.emit('new_position', {'status': 'New paper trade initiated'})
-            return jsonify({
-                "status": f"{option_type} paper trade initiated",
-                "symbol": symbol,
+                "trade_type": "paper",
                 "order_status": "open",
-                "entry_price": rounded_price,
-                "quantity": total_quantity,
-                "trade_record_id": trade_record_id
-            }), 200
-        return jsonify({"error": "Invalid signal"}), 400
+                "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
+                "entry_price": entry_price,
+                "capital_used": entry_price * total_quantity,
+                "option_security_id": int(opt_sec_id)
+            }
+            save_or_update_trade_data(trade_data)
+            socketio.emit('new_position', {'status': 'Paper trade started'})
+            return jsonify({"status": "Paper Trade Started", "price": entry_price}), 200
+
+    return jsonify({"error": "Invalid action"}), 400
         
 @app.route('/positions/exit', methods=['POST'], endpoint='exit_position_api')
 def exit_position_api():

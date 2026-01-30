@@ -107,67 +107,6 @@ global_rate_limit_lock = threading.Lock()
 last_global_api_call_time = 0
 global_min_interval = 0.05  
 
-def global_rate_limit_wait():
-    global last_global_api_call_time
-    with global_rate_limit_lock:
-        now = time.time()
-        elapsed = now - last_global_api_call_time
-        wait_time = global_min_interval - elapsed
-        if wait_time > 0:
-            time.sleep(wait_time)
-        last_global_api_call_time = time.time()
-
-api_call_timestamps = collections.deque()
-
-def log_api_call():
-    now = time.time()
-    api_call_timestamps.append(now)
-    
-    while api_call_timestamps and (now - api_call_timestamps[0]) > 1:
-        api_call_timestamps.popleft()
-    logging.info(f"API calls in last 1 second: {len(api_call_timestamps)}")
-
-class DhanApiManager:
-    def __init__(self, api_type='order'):
-        self.last_api_call_time = 0
-        self.lock = threading.Lock()
-        if api_type == 'order':
-            self.rate_limit_interval = 0.04
-        elif api_type == 'data':
-            self.rate_limit_interval = 0.2 
-        elif api_type == 'quote':
-            self.rate_limit_interval = 1  
-        elif api_type == 'non_trading':
-            self.rate_limit_interval = 0.05
-        else:
-            self.rate_limit_interval = 0.05 
-
-    def _wait_for_rate_limit(self):
-        current_time = time.time()
-        time_since_last_call = current_time - self.last_api_call_time
-        if time_since_last_call < self.rate_limit_interval:
-            wait_time = self.rate_limit_interval - time_since_last_call
-            logging.debug(f"API Rate limit per type, waiting for {wait_time:.2f}s...")
-            time.sleep(wait_time)
-        self.last_api_call_time = time.time()
-    
-    def make_request(self, method, url, headers, json_data):
-        print(f"DEBUG: API call to {url}")
-        logging.info(f"make_request called with URL: {url}")
-        self._wait_for_rate_limit()
-        global_rate_limit_wait()
-        log_api_call()
-        if method.lower() == 'post':
-            return requests.post(url, headers=headers, json=json_data)
-        elif method.lower() == 'get':
-            return requests.get(url, headers=headers)
-        return None
-
-order_api_manager = DhanApiManager(api_type='order')
-data_api_manager = DhanApiManager(api_type='data')
-quote_api_manager = DhanApiManager(api_type='quote')
-non_trading_api_manager = DhanApiManager(api_type='non_trading')
-
 
 def load_global_settings_optimized():
     settings_keys = [
@@ -217,63 +156,18 @@ def update_setting(key, value):
 def round_to_0_05(x):
     return round(x * 20) / 20
 
-api_call_cache = {}
-best_bid_ask_cache = {}
-COOLDOWN_SECONDS = 1.5
-CACHE_LIFETIME = 7
+
 
 def get_best_bid_ask(security_id):
-    now = time.time()
-    if security_id in api_call_cache:
-        elapsed = now - api_call_cache[security_id]
-        if elapsed < COOLDOWN_SECONDS:
-            logging.info(f"Skipping bid/ask call for {security_id}, cooldown {elapsed:.2f}s")
-            if security_id in best_bid_ask_cache:
-                cached_time, bid_ask = best_bid_ask_cache[security_id]
-                if now - cached_time < CACHE_LIFETIME:
-                    return bid_ask
-            return None, None
-    if security_id in best_bid_ask_cache:
-        cached_time, bid_ask = best_bid_ask_cache[security_id]
-        if now - cached_time < CACHE_LIFETIME:
-            return bid_ask
+    from shared_objects import market_data_cache
     
-    try:
-        url = "https://api.dhan.co/v2/marketfeed/quote"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "access-token": get_setting("dhan_access_token"),
-            "client-id": get_setting("dhan_client_id"),   
-        }
-        body = {"NSE_FNO": [security_id]}
-                      
-        response = quote_api_manager.make_request('post', url, headers, body)
-        resp = response.json()
-        
-        
-        if resp.get("status") != "success" or not resp.get("data"):
-            logging.warning(f"Market depth API failed for security {security_id}: {resp}")
-            return None, None
-
-        security_data = resp["data"]["NSE_FNO"].get(str(security_id), {})
-        depth = security_data.get("depth", {})
-
-        buy_depth = depth.get("buy", [])
-        sell_depth = depth.get("sell", [])
-
-        best_bid = buy_depth[0].get("price", None) if buy_depth else None
-        best_ask = sell_depth[0].get("price", None) if sell_depth else None
-        if best_bid is None or best_ask is None:
-            logging.warning(f"Best bid or ask price missing for {security_id}")
-            return None, None
-
-        best_bid_ask_cache[security_id] = (now, (best_bid, best_ask))
-        api_call_cache[security_id] = now
-        return best_bid, best_ask
-    except Exception as e:
-        logging.error(f"Error fetching best bid/ask for {security_id}: {e}")
-        return None, None
+    ltp = market_data_cache.get(str(security_id))
+    
+    if ltp and float(ltp) > 0:
+        val = float(ltp)
+        return val, val  
+    
+    return None, None
         
 def throttled_get_best_bid_ask(security_id):
     global last_called_security, last_call_time
@@ -290,12 +184,14 @@ def throttled_get_best_bid_ask(security_id):
 def place_order(security_id, txn_type, qty=1):
     client_id = get_setting("dhan_client_id")
     access_token = get_setting("dhan_access_token")
-    best_bid, best_ask = get_best_bid_ask(security_id)
-    if not best_bid or not best_ask or best_bid <= 0 or best_ask <= 0:
-        logging.error("Invalid bid or ask price, skipping order placement")
+    
+    ltp, _ = get_best_bid_ask(security_id)
+    
+    if not ltp:
+        logging.error(f"Order Cancelled: LTP missing for {security_id}")
         return None
-    avg_price = (best_bid + best_ask) / 2
-    avg_price_rounded = round_to_0_05(avg_price)
+    
+    price = round_to_0_05(ltp)
     
     symbol_raw = get_symbol_from_security_id(security_id)
     expiry_date = get_expiry_date()
@@ -303,9 +199,6 @@ def place_order(security_id, txn_type, qty=1):
     year = expiry_date.strftime("%Y") if expiry_date else ""
     strike = get_strike_for_security(security_id)
     option_type = get_option_type_for_security(security_id)
-
-    
-
     trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
 
     
@@ -315,54 +208,35 @@ def place_order(security_id, txn_type, qty=1):
         "access-token": get_setting("dhan_access_token"),
         "client-id": get_setting("dhan_client_id"),
     }
-    if txn_type.upper() == "SELL":
-        order_type = "MARKET"
-        price = None  
-    else:
-        order_type = "LIMIT"
-        price = avg_price_rounded
+    order_type = "MARKET" if txn_type.upper() == "SELL" else "LIMIT"
     
     body = {
-        "dhanClientId": get_setting("dhan_client_id"),
-        "correlationId": f"order_{security_id}_{int(time.time())}",
+        "dhanClientId": client_id,
         "transactionType": txn_type.upper(),
         "exchangeSegment": "NSE_FNO",
         "productType": "INTRADAY",
-        "orderType": "LIMIT",
+        "orderType": order_type,
         "validity": "DAY",
         "securityId": str(security_id),
-        "quantity": qty,
-        "disclosedQuantity": 0,
-        "price": avg_price_rounded,
+        "quantity": int(qty),
+        "price": price if order_type == "LIMIT" else 0,
         "tradingSymbol": trading_symbol
     }
-        
     try:
-        logging.info("Sending order to Dhan API")
-        response = order_api_manager.make_request('post', url, headers, body)
-        resp_json = response.json()
-        resp_json["tradingSymbol"] = trading_symbol or resp_json.get("tradingSymbol", "")
-        order_id = resp_json.get("orderId")
-        order_status = resp_json.get("orderStatus", "").upper()
-
-        if not order_id:
-            logging.error(f"Order ID missing in response: {resp_json}")
-            return None
-        if order_status in ["FAILED", "REJECTED"]:
-            logging.error(f"Live order failed: {resp_json}")
-            return None
-        elif order_status in ["PENDING", "TRANSIT"]:
-            logging.info(f"Live order in transit: {resp_json}")
-            return resp_json
-        elif order_status == "CONFIRM":
-            logging.info(f"Live order placed successfully: {resp_json}")
+        logging.info(f"Firing {txn_type} Order: {trading_symbol} @ {price}")
+        response = requests.post(url, headers=headers, json=body)
+        resp_json = response.json()        
+        
+        if resp_json.get("orderId"):
+            resp_json["executed_price"] = price 
+            resp_json["tradingSymbol"] = trading_symbol
             return resp_json
         else:
-            logging.warning(f"Live order returned unhandled status: {resp_json}")
+            logging.error(f"Order Placement Failed: {resp_json}")
             return None
     except Exception as e:
-        logging.error(f"Error placing live order: {e}")
-        return False
+        logging.error(f"Fatal Order Error: {e}")
+        return None
 
 def place_order_with_confirmation(security_id, txn_type, qty=1):
     order_resp = place_order(security_id, txn_type, qty)
@@ -577,17 +451,15 @@ def parse_executed_price(order_data, security_id=None, paper_trade=False):
         if price > 0:
             return price
     except Exception:
-        price = None
+        pass
 
     if not paper_trade and security_id:
-        from ws_client import get_last_ltp
-        ltp = get_last_ltp(str(security_id))
-        if ltp and float(ltp) > 0:
+        from shared_objects import market_data_cache
+        ltp = market_data_cache.get(str(security_id))
+        if ltp:
             return float(ltp)
-        best_bid, best_ask = get_best_bid_ask(security_id)
-        if best_bid and best_ask:
-            return (best_bid + best_ask) / 2
-    return 0
+            
+    return 0.0
 
 def make_broker_style_symbol(sym, expiry, year, strike, opt_type):
     return f"{sym}-{expiry}{year}-{strike}-{opt_type}".replace("--", "-")
