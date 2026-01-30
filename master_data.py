@@ -253,3 +253,11 @@ def get_option_type_for_security(security_id):
         if option_cache[key]['SECURITY_ID'] == security_id:
             return key[2]  # option type is third element of key tuple
     return None
+    
+def get_instrument_id(symbol):
+    # STEP 1: Hardcode Check (Sabse Pehle)
+    if symbol == "NIFTY" or symbol == "Nifty 50":
+        return 13  # Yahan humne jabardasti 13 bhej diya
+
+    # STEP 2: Agar NIFTY nahi hai, to dictionary me dhundo
+    return index_symbol_to_id.get(symbol)

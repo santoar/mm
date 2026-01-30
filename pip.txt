@@ -7,7 +7,7 @@ pip install Flask-SocketIO
 
 
 
-curl -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -d "{\"symbol\":\"INFY\",\"action\":\"BUY\",\"option_type\":\"CE\",\"price\":\"700.00\",\"qty\":1}"
+curl -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -d "{\"symbol\":\"NIFTY\",\"action\":\"BUY\",\"option_type\":\"CE\",\"price\":\"700.00\",\"qty\":1}"
 
 
 
@@ -18,5 +18,7 @@ curl -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -
 
 
 
-
-
+git add .
+git commit -m "Added GitHub Actions Deployment"
+git push origin master
+git push origin master --force
