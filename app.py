@@ -1111,28 +1111,29 @@ def debug_refresh_cache():
     refresh_settings_cache()
     logging.info(f"Cache after manual refresh: {global_settings_cache}")
     return jsonify({"cache": global_settings_cache}), 200
+
+
 from flask_socketio import SocketIO
 
-if __name__ == "__main__":
-    with app.app_context():
-        refresh_active_option_ids(app)
+socketio.init_app(app)
+import ws_client  
+ws_client.set_socketio(socketio)
+
+print("--- INITIALIZING BOT FOR CLOUD DEPLOYMENT ---")
+with app.app_context():
+    try:
         load_master_data(force_reload=True)
-        start_atm_cache_updater(120)
-        periodic_cache_refresh()
         
-        logging.info(f"Startup PID: {os.getpid()}, Cache ID: {id(global_settings_cache)}, Cache keys: {list(global_settings_cache.keys())}")
-        
-    t_expiry = threading.Thread(target=expiry_check_loop, daemon=True)
-    t_expiry.start()
-    
-    socketio.init_app(app)
-    import ws_client
-    ws_client.set_socketio(socketio)
-    security_ids = [13] 
-    t = threading.Thread(target=ws_client.start_ws_loop, args=(app,), daemon=True)
-    t.start()
-    
-    polling_thread = threading.Thread(target=polling_loop, daemon=True)
-    polling_thread.start()
+        threading.Thread(target=ws_client.start_ws_loop, args=(app,), daemon=True).start()
+        threading.Thread(target=polling_loop, daemon=True).start()
+        threading.Thread(target=expiry_check_loop, daemon=True).start()
+        threading.Thread(target=start_atm_cache_updater, args=(120,), daemon=True).start()
+        logging.info("All Cloud Background Threads Started.")
+    except Exception as e:
+        logging.error(f"Error during initialization: {e}")
+
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
+    
     socketio.run(app, host="0.0.0.0", port=port, debug=True, use_reloader=False)
