@@ -96,7 +96,8 @@ def decode_message(msg_bytes):
                     
                     name = next((k for k, v in index_symbol_to_id.items() if str(v) == sec_str), "INDEX")
                     print(f"{name} ({sec_str}): {ltp:.2f}")
-                
+                else:
+                    print(f"OPTION ({sec_str}): {ltp:.2f}")
                 last_printed_ltp[sec_str] = ltp
                 
             if socketio:

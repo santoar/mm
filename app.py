@@ -84,20 +84,32 @@ atm_option_security_cache = {}
 
 def update_atm_option_cache_for_symbol(symbol, ltp, expiry, strike_selection=0):
     try:
+        from ws_client import subscribe_symbols  
         ce_sec_id, ce_strike, ce_symbol = find_option_security_id_fast(symbol, expiry, ltp, 'CE', strike_selection)
+        pe_sec_id, pe_strike, pe_symbol = find_option_security_id_fast(symbol, expiry, ltp, 'PE', strike_selection)
+
+        ids_to_subscribe = []
+
         if ce_sec_id:
             atm_option_security_cache[(symbol, "CE")] = {
                 'SECURITY_ID': ce_sec_id,
                 'STRIKE': ce_strike,
                 'SYMBOL_NAME': ce_symbol
             }
-        pe_sec_id, pe_strike, pe_symbol = find_option_security_id_fast(symbol, expiry, ltp, 'PE', strike_selection)
+            ids_to_subscribe.append(str(ce_sec_id))
+
         if pe_sec_id:
             atm_option_security_cache[(symbol, "PE")] = {
                 'SECURITY_ID': pe_sec_id,
                 'STRIKE': pe_strike,
                 'SYMBOL_NAME': pe_symbol
             }
+            ids_to_subscribe.append(str(pe_sec_id))
+
+        if ids_to_subscribe:
+            logging.info(f"Pre-subscribing to ATM options for {symbol}: {ids_to_subscribe}")
+            subscribe_symbols(ids_to_subscribe)  # Bot alert aane se pehle hi price sunna shuru kar dega
+            
         logging.info(f"Cached ATM options for {symbol}: CE {ce_sec_id}, PE {pe_sec_id}")
     except Exception as e:
         logging.error(f"Error updating ATM option cache for {symbol}: {e}")
@@ -898,6 +910,12 @@ print("--- INITIALIZING BOT FOR CLOUD DEPLOYMENT ---")
 with app.app_context():
     try:
         load_master_data(force_reload=True)
+        from ws_client import subscribe_symbols
+        def start_ws_and_subscribe():
+             ws_client.start_ws_loop(app)
+             time.sleep(2) 
+             subscribe_symbols(["13", "51"]) 
+             logging.info("Indices NIFTY & SENSEX subscribed for ATM calculation.")
         
         threading.Thread(target=ws_client.start_ws_loop, args=(app,), daemon=True).start()
         threading.Thread(target=polling_loop, daemon=True).start()
