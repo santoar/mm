@@ -49,7 +49,8 @@ logging.info("Helper loaded - Clean logging + Supabase quiet")
 
 
 global_settings_cache = {}
-
+_position_cache = {}     
+_cache_expiry_seconds = 60
 def load_settings_from_supabase():
     try:
         response = supabase.table("settings").select("*").execute()
@@ -799,9 +800,16 @@ def check_broker_open_position(trading_symbol, option_type=None, strike=None, se
         logging.error(f"Error in check_broker_open_position: {e}")
         return None
 
+import re
+
+import re
+
 def normalize_symbol(s):
     if not s: return ""
-    return str(s).replace("-", "").replace("_", "").replace(".", "").upper().strip()
+    s = str(s).upper().strip()
+    if ".0" in s:
+        s = s.replace(".0", "")
+    return re.sub(r'[^A-Z0-9]', '', s).strip()
 
 def map_opt(t):
     t = (t or "").upper().strip()

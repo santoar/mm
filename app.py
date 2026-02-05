@@ -78,7 +78,7 @@ def token_refresh_loop():
 
 #--- Flask Setup ---
 app = Flask(__name__)
-
+processed_alerts = set()
 batched_trades = []
 atm_option_security_cache = {}
 
@@ -242,7 +242,7 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
             "exit_time": get_current_ist_time().strftime("%H:%M:%S")
         }).eq("id", int(row_id)).execute()
         
-        return {"status": "Already closed on broker. DB synced."}, 200
+        return {"status": "Paper Trade closed on broker. DB synced."}, 200
 
     is_rapid_exit = True if exit_reason == "rapid_exit_alert" else False
     
@@ -515,6 +515,14 @@ def webhook():
     option_type = data.get('option_type', '').strip().upper()
     strike = data.get('strike')
     
+    alert_key = f"{symbol}_{action}_{option_type}_{strike}"
+    if alert_key in processed_alerts:
+        logging.info(f"BLOCKING DUPLICATE ALERT: {alert_key}")
+        return jsonify({"status": "Already processing"}), 200
+    
+    processed_alerts.add(alert_key)
+    threading.Timer(20, lambda: processed_alerts.discard(alert_key)).start()
+    
     try:
         strike = int(strike) if strike is not None else None
     except Exception:
@@ -715,39 +723,48 @@ def webhook():
             }), 200
         
         trade_type = "paper" if paper_trade else "live"
-        
-        if trade_type == "live":
-            try:
-                # Direct Limit Order fire karein entry_price par
+        try:
+            if trade_type == "live":
                 order_resp = place_order_with_confirmation(opt_sec_id, "BUY", total_quantity)
+                
                 if not order_resp or not order_resp.get("orderId"):
                     return jsonify({"error": "Order placement failed"}), 500
+                
+                try:
+                    if 'socketio' in globals():
+                        socketio.emit('new_position', {'status': 'Live trade started'})
+                except Exception: pass
+                
                 return jsonify({"status": "Success", "order_id": order_resp.get("orderId")}), 200
-            except Exception as e:
-                logging.error(f"Order error: {e}")
-                return jsonify({"error": "Internal error"}), 500
         
-        else: # Paper Trade
-            trade_data = {
-                "timestamp": today_date,
-                "symbol": symbol,
-                "trading_symbol": full_opt_symbol,
-                "option_type": option_type,
-                "strike": int(sel_strike),
-                "quantity": int(quantity),
-                "lot_size": int(lot_size),
-                "trade_type": "paper",
-                "order_status": "open",
-                "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
-                "entry_price": entry_price,
-                "capital_used": entry_price * total_quantity,
-                "option_security_id": int(opt_sec_id)
-            }
-            save_or_update_trade_data(trade_data)
-            socketio.emit('new_position', {'status': 'Paper trade started'})
-            return jsonify({"status": "Paper Trade Started", "price": entry_price}), 200
+            else: # Paper Trade
+                trade_data = {
+                    "timestamp": today_date,
+                    "symbol": symbol,
+                    "trading_symbol": full_opt_symbol,
+                    "option_type": option_type,
+                    "strike": int(sel_strike),
+                    "quantity": int(quantity),
+                    "lot_size": int(lot_size),
+                    "trade_type": "paper",
+                    "order_status": "open",
+                    "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
+                    "entry_price": entry_price,
+                    "capital_used": entry_price * total_quantity,
+                    "option_security_id": int(opt_sec_id)
+                }
+                save_or_update_trade_data(trade_data)
+                try:
+                    if 'socketio' in globals():
+                        socketio.emit('new_position', {'status': 'Paper trade started'})
+                except Exception: pass
+                return jsonify({"status": "Paper Trade Started"}), 200
 
-    return jsonify({"error": "Invalid action"}), 400
+        except Exception as e:
+            logging.error(f"Order error: {e}")
+            return jsonify({"error": "Internal execution error"}), 500
+
+    return jsonify({"error": "Invalid flow"}), 400
         
 @app.route('/positions/exit', methods=['POST'], endpoint='exit_position_api')
 def exit_position_api():
