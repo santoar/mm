@@ -47,25 +47,31 @@ def fetch_live_master_data_direct(url='https://images.dhan.co/api-data/api-scrip
 def get_expiry_date(symbol="NIFTY"):
     from helper import global_settings_cache
     from datetime import datetime
+    import logging
     
-    symbol_clean = str(symbol).upper().replace('-', '').replace('_', '')
-    expiry_key = f"{symbol_clean}_expiry"
+    # 1. Symbol ko clean karo (sirf upper case aur extra spaces hatao)
+    symbol_name = str(symbol).strip().upper()
     
+    # 2. Key banao (Underscore rehne do kyunki DB mein hai)
+    expiry_key = f"{symbol_name}_expiry"
+    
+    # 3. Cache se value uthao
     expiry_str = global_settings_cache.get(expiry_key)
     
+    # 4. Agar SENSEX_expiry nahi mili, toh NIFTY_expiry ya generic try karo
     if not expiry_str:
-        expiry_str = global_settings_cache.get("expiry_date", "").strip()
+        expiry_str = global_settings_cache.get("NIFTY_expiry") or global_settings_cache.get("expiry_date")
     
     if expiry_str:
         try:
-            return datetime.strptime(expiry_str, "%Y-%m-%d").date()
+            # String (2026-02-09) se date object banayein
+            return datetime.strptime(str(expiry_str).strip(), "%Y-%m-%d").date()
         except Exception as e:
+            logging.error(f"Expiry parsing error for {symbol_name}: {e}")
             return None
-    else:
-        logging.warning("Expiry date not set in settings.")
-        return None
     
-
+    logging.warning(f"No expiry found in cache for key: {expiry_key}")
+    return None
 def load_master_data(force_reload=False):
     global df_master, index_symbol_to_id, preprocessed_option_map
     
@@ -213,32 +219,50 @@ def get_symbol_from_security_id(security_id):
     return None
 
 def get_lot_size(symbol, expiry, strike, option_type):
-    start = time.time()
+    
+    global preprocessed_option_map
+    import time
+    
+    symbol_upper = str(symbol).strip().upper()
+    
+    if "SENSEX" in symbol_upper:
+        return 20  
+        
+    elif "NIFTY" in symbol_upper and "BANK" not in symbol_upper:
+        return 65
+        
     try:
-        expiry_str = expiry.strftime("%Y-%m-%d")
-        key = (symbol.upper(), expiry_str, option_type.upper(), float(strike))
-        contract = option_cache.get(key)
+        expiry_str = str(expiry)
+        option_type_upper = str(option_type).strip().upper()
+        
+        
+        key = (symbol_upper, expiry_str, option_type_upper)
+        
+        contracts = preprocessed_option_map.get(key)
+        
+        if contracts and len(contracts) > 0:
+            found_lot = contracts[0].get('LOT_SIZE', 0)
+            if found_lot and int(found_lot) > 0:
+                return int(found_lot)
 
-        if contract:
-            lot_size = contract.get('LOT_SIZE', 1)
-        else:
-            logger.warning(f"Lot size not found in option cache for {key}, defaulting to 1")
-            lot_size = 1
     except Exception as e:
-        logging.error(f"Error fetching lot size for {symbol}: {e}, defaulting to 1.")
-        lot_size = 1
-    end = time.time()
-    logger.info(f"get_lot_size executed in {end - start:.4f}s for {symbol}")
-    return lot_size
+        logger.error(f"Error fetching lot size: {e}")
+        
+    return 1 
 
 
 def get_lot_size_for_security(security_id):
-    for key, val in option_cache.items():
-        if val['SECURITY_ID'] == security_id:
-            symbol, expiry_str, option_type, strike = key
-            from datetime import datetime
-            expiry = datetime.strptime(expiry_str, "%Y-%m-%d").date()
-            return get_lot_size(symbol, expiry, strike, option_type)
+    global preprocessed_option_map
+    for key, contracts in preprocessed_option_map.items():
+        for contract in contracts:
+            if contract['SECURITY_ID'] == security_id:
+                symbol, expiry_str, option_type = key
+                from datetime import datetime
+                expiry = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+                
+                return get_lot_size(symbol, expiry, contract['strike'], option_type)
+    
+    
     return 1
 
 def get_strike_for_security(security_id):

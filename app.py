@@ -570,7 +570,11 @@ def webhook():
                 quantity = int(data['qty'])
             except Exception:
                 quantity = 1
-        expiry_date_str = get_setting("expiry_date", "")
+        expiry_date = get_expiry_date(symbol) # Naya function jo SENSEX_expiry uthayega
+        
+        if not expiry_date:
+            logging.error(f"Expiry not found for symbol: {symbol}")
+            return jsonify({"error": f"No valid expiry found for {symbol}"}), 400
         strike_sel = int(get_setting("strike_selection", "0"))
     except (ValueError, TypeError) as e:
         return jsonify({"error": f"Error loading dynamic settings: {e}"}), 500
@@ -649,21 +653,11 @@ def webhook():
             logging.error(f"Error fetching LTP for {symbol}: {e}")
             return jsonify({"error": "Failed to fetch market data"}), 500
         
-        expiry_date = None
-        if expiry_date_str:
-            try:
-                expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
-            except ValueError:
-                try:
-                    expiry_date = datetime.strptime(expiry_date_str, "%m/%d/%Y").date()
-                except Exception as e:
-                    print(f"Expiry date parsing error: {e}")
-        else:
-            return jsonify({"error": "No valid expiry found"}), 400
+        expiry_date = get_expiry_date(symbol)
         
         if not expiry_date:
-            return jsonify({"error": "No valid expiry found"}), 400
-        
+            return jsonify({"error": f"No valid expiry found for {symbol}"}), 400
+            
         # 3. Calculate Option Security ID
         option_info = atm_option_security_cache.get((symbol, option_type))
         if option_info:
@@ -697,26 +691,32 @@ def webhook():
                     "client-id": get_setting("dhan_client_id"),
                     "Content-Type": "application/json"
                 }
+                trading_segment = "BSE_FNO" if symbol == "SENSEX" else "NSE_FNO"
                 
                 payload = {
-                    "NSE_FNO": [str(opt_sec_id)]
+                    trading_segment: [str(opt_sec_id)]
                 }
                 
                 resp = requests.post(url, headers=headers, json=payload, timeout=2)
                 
                 if resp.status_code == 200:
                     data = resp.json()
-                    if data.get("data") and "NSE_FNO" in data["data"]:
-                        stock_data = data["data"]["NSE_FNO"].get(str(opt_sec_id))
+                
+                    if data.get("data") and trading_segment in data["data"]:
+                        stock_data = data["data"][trading_segment].get(str(opt_sec_id))
+                        
                         if stock_data and "last_price" in stock_data:
                             ltp = float(stock_data["last_price"])
-                            logging.info(f"API Fallback Success! Fetched LTP: {ltp}")
+                            logging.info(f"API Fallback Success! Fetched LTP for {symbol} ({trading_segment}): {ltp}")
+                        else:
+                            logging.error(f"LTP not found in API response for {opt_sec_id}")
+                    else:
+                        logging.error(f"Segment {trading_segment} missing in API response.")
                 else:
                     logging.error(f"API Fallback Failed: Status {resp.status_code} | {resp.text}")
 
             except Exception as e:
                 logging.error(f"Critical API Fallback Error: {e}")
-
         
         if ltp and ltp > 0:
             rounded_price = round_to_0_05(ltp)

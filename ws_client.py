@@ -134,7 +134,13 @@ async def subscribe_and_listen(app):
                     if combined_ids and (combined_ids != last_subscribed_ids):
                         instrument_list = []
                         for sid in combined_ids:
-                            seg = "IDX_I" if sid in index_ids else "NSE_FNO"
+                            if sid in index_ids:
+                                seg = "IDX_I"
+                            elif int(sid) > 500000: 
+                                seg = "BSE_FNO"
+                            else:
+                                seg = "NSE_FNO"
+                                
                             instrument_list.append({"ExchangeSegment": seg, "SecurityId": str(sid)})
 
                         req = {"RequestCode": 15, "InstrumentCount": len(instrument_list), "InstrumentList": instrument_list}
