@@ -236,8 +236,24 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
     opt_sec_id = open_pos.get("option_security_id")
     trading_symbol = open_pos.get("trading_symbol")
     entry_price = float(open_pos.get('entry_price', 0) or 0)
-    total_quantity = int(open_pos.get('lot_size', 1)) * int(open_pos.get('quantity', 1))
+    
+    lot_size = int(open_pos.get('lot_size', 1))
+    qty_multiplier = int(open_pos.get('quantity', 1)) 
+    total_quantity = lot_size * qty_multiplier
 
+    last_ltp = get_last_ltp(opt_sec_id)
+    
+    if not last_ltp or float(last_ltp) <= 0:
+        pass 
+    
+    if last_ltp and float(last_ltp) > 0:
+        exit_price = float(last_ltp)
+    else:
+        exit_price = entry_price # Agar kuch na mile toh Entry Price hi maan lo (0 se behtar hai)
+
+    
+    pnl = (exit_price - entry_price) * total_quantity
+    
     broker_match = check_broker_open_position(
         trading_symbol=trading_symbol, 
         option_type=option_type, 
@@ -252,17 +268,13 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
         supabase.table("trade_log").update({
             "order_status": "closed",
             "reason": "manual_exit_sync",
-            "exit_time": get_current_ist_time().strftime("%H:%M:%S")
+            "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
+            "exit_price": float(exit_price),
+            "pnl": float(pnl)
         }).eq("id", int(row_id)).execute()
         
-        return {"status": "Paper Trade closed on broker. DB synced."}, 200
+        return {"status": "Paper Trade closed DB synced.", "exit_price": exit_price}, 200
 
-    is_rapid_exit = True if exit_reason == "rapid_exit_alert" else False
-    
-    
-    last_ltp = get_last_ltp(str(opt_sec_id))
-    exit_price = round_to_0_05(last_ltp) if last_ltp else entry_price
-    
     paper_trade = str(get_setting("paper_trade")).lower() == 'true'
     order_id = ""
 
@@ -271,12 +283,14 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
         if exit_order_resp and exit_order_resp.get("orderId"):
             order_id = exit_order_resp.get("orderId")
             avg_p = exit_order_resp.get("averagePrice") or exit_order_resp.get("executed_price")
-            if avg_p: exit_price = float(avg_p)
+            if avg_p:
+                exit_price = float(avg_p)
+                pnl = (exit_price - entry_price) * total_quantity 
         else:
             logging.error("Broker Exit Order FAILED.")
             return {"error": "Broker Exit Failed"}, 500
 
-    pnl = (exit_price - entry_price) * total_quantity
+    
     supabase.table("trade_log").update({
         "order_status": "closed",
         "exit_price": float(exit_price),
