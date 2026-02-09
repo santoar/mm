@@ -698,34 +698,36 @@ def find_open_position(symbol_or_trading_symbol, option_type=None, strike=None, 
         today = date.today().strftime("%Y-%m-%d")
     
     sym = (str(symbol_or_trading_symbol) or "").strip().upper()
-    logging.info(f"Looking for trade: {sym} | Opt: {option_type}")
-    
+    logging.info(f"Searching DB for: {sym} | Opt: {option_type} | Strike: {strike}")
     
     try:
         query = supabase.table("trade_log").select("*") \
             .eq("order_status", "open") \
             .eq("timestamp", today) \
-            .in_("trade_type", ["live", "paper"])
+            .in_("trade_type", ["live", "paper"]) \
+            .order("id", desc=True) 
 
         if option_type:
             query = query.eq("option_type", str(option_type).upper())
-        
-        if strike:
+                
+        if strike is not None:
             try:
-                query = query.eq("strike", float(strike))
-            except: pass
+                s_val = int(float(strike)) 
+                query = query.eq("strike", s_val)
+            except: 
+                pass
 
-        
         resp = query.or_(f"symbol.eq.{sym},trading_symbol.eq.{sym}").execute()
-        data = getattr(resp, 'data', [])
+        data = resp.data or []
 
-        if data and len(data) > 0:
+        if data:
+            logging.info(f"Match Found! Row ID: {data[0]['id']} for {data[0]['trading_symbol']}")
             return data[0]
             
         return None
 
     except Exception as e:
-        logging.error(f"Search failed for {sym}: {e}")
+        logging.error(f"DB Search failed for {sym}: {e}")
         return None
 
 
@@ -799,8 +801,6 @@ def check_broker_open_position(trading_symbol, option_type=None, strike=None, se
     except Exception as e:
         logging.error(f"Error in check_broker_open_position: {e}")
         return None
-
-import re
 
 import re
 

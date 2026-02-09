@@ -115,16 +115,17 @@ def update_atm_option_cache_for_symbol(symbol, ltp, expiry, strike_selection=0):
         logging.error(f"Error updating ATM option cache for {symbol}: {e}")
 
 def update_all_atm_option_cache():
-    expiry = get_expiry_date()
-    if not expiry:
-        logging.warning("Expiry date not found, skipping ATM cache update.")
-        return
     for symbol in trading_symbols:
         ltp = get_index_ltp(symbol)
         if ltp:
-            update_atm_option_cache_for_symbol(symbol, ltp, expiry)
+            expiry = get_expiry_date(symbol) 
+            
+            if expiry:
+                update_atm_option_cache_for_symbol(symbol, ltp, expiry)
+            else:
+                logging.warning(f"Expiry date not found for {symbol}, skipping ATM update.")
+                
     logging.info("ATM option security cache updated for all symbols.")
-
 def start_atm_cache_updater(interval_sec=120):
     def run():
         while True:
@@ -582,34 +583,40 @@ def webhook():
         }), 400
     
     if signal == "exit":
+        open_pos = find_open_position(symbol, option_type, strike)
+        if not open_pos:
+            return jsonify({"status": "No open position to exit in DB"}), 200
+            
+        strike = open_pos.get("strike")
+        opt_sec_id = open_pos.get("option_security_id")
+            
         if paper_trade:
-            open_pos = find_open_position(symbol, option_type, strike)
-            if not open_pos:
-                return jsonify({"status": "No open position to exit in paper trade"}), 200
-            trading_symbol = open_pos.get("trading_symbol", "")
             response, status_code = exit_position_core_logic(symbol, option_type, strike)
             return jsonify(response), status_code
         else:
-            broker_pos = check_broker_open_position(symbol, option_type, strike)
+            broker_pos = check_broker_open_position(symbol, option_type, strike, security_id=opt_sec_id)
+            
             if not broker_pos:
-                return jsonify({
-                    "status": "No open position found at broker; no exit order placed"
-                }), 200
-            strike = broker_pos.get("strike", strike)
-            trading_symbol = broker_pos.get("tradingSymbol", "") or ""
+                # Sync logic agar broker par closed hai
+                supabase.table("trade_log").update({"order_status": "closed", "reason": "sync_exit"}).eq("id", open_pos['id']).execute()
+                return jsonify({"status": "Already closed on broker. DB synced."}), 200
+            
+            # Agar broker par open hai, toh exit maaro
             response, status_code = exit_position_core_logic(symbol, option_type, strike)
             return jsonify(response), status_code
-                        
+
+    # --- Yahan se ENTRY logic shuru hota hai ---
     if signal in ["long", "short"]:
         open_pos = find_open_position_with_broker_sync(symbol, option_type, strike)
-    if open_pos:
-        return jsonify({
-            "status": "Duplicate order prevented",
-            "message": f"An open position already exists for {symbol}. New order will not be placed."
-        }), 200
-    
-    if is_duplicate_trade(symbol, option_type, strike_sel, today_date):
-        return jsonify({"status": "Duplicate trade prevented"}), 200
+        
+        if open_pos:
+            return jsonify({
+                "status": "Duplicate order prevented",
+                "message": f"An open position already exists for {symbol}."
+            }), 200
+        
+        if is_duplicate_trade(symbol, option_type, strike_sel, today_date):
+            return jsonify({"status": "Duplicate trade prevented"}), 200    
     
     resp = supabase.table("trade_log")\
         .select("id")\

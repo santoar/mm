@@ -21,7 +21,7 @@ loaded_expiry_date = None
 
 # Define your trading stocks list here (39 stocks)
 trading_symbols = set([
-    "NIFTY",
+    "NIFTY", "SENSEX",
 ])
 
 logger = logging.getLogger(__name__)
@@ -44,111 +44,110 @@ def fetch_live_master_data_direct(url='https://images.dhan.co/api-data/api-scrip
     else:
         logger.warning(f"Failed to download master data: {r.status_code}")
 
-def get_expiry_date():
+def get_expiry_date(symbol="NIFTY"):
     from helper import global_settings_cache
-    expiry_str = global_settings_cache.get("expiry_date", "").strip()
-    print(f"expiry_str value in get_expiry_date: {expiry_str}")
+    from datetime import datetime
+    
+    symbol_clean = str(symbol).upper().replace('-', '').replace('_', '')
+    expiry_key = f"{symbol_clean}_expiry"
+    
+    expiry_str = global_settings_cache.get(expiry_key)
+    
+    if not expiry_str:
+        expiry_str = global_settings_cache.get("expiry_date", "").strip()
+    
     if expiry_str:
-        from datetime import datetime
         try:
             return datetime.strptime(expiry_str, "%Y-%m-%d").date()
-        except ValueError:
-            try:
-                return datetime.strptime(expiry_str, "%m/%d/%Y").date()
-            except Exception as e:
-                logger.error(f"Expiry date parsing error: {e}")
-                return None
+        except Exception as e:
+            return None
     else:
         logging.warning("Expiry date not set in settings.")
         return None
+    
 
 def load_master_data(force_reload=False):
-    global df_master, index_symbol_to_id, option_symbol_to_id, option_cache, loaded_expiry_date
-    
-    expiry_date = get_expiry_date()
-
-    if loaded_expiry_date == expiry_date and not force_reload:
-        logger.info(f"Expiry unchanged ({expiry_date}), skipping reload.")
-        return
-
-    loaded_expiry_date = expiry_date
-    
-    index_symbol_to_id.clear()
-    option_symbol_to_id.clear()
-    option_cache.clear()
-    
-    index_symbol_to_id["NIFTY"] = "13"
-    logger.info("Manually initialized NIFTY Index ID to 13")
+    global df_master, index_symbol_to_id, preprocessed_option_map
     
     try:
         logger.info("Starting to fetch latest master data CSV...")
         fetch_live_master_data_direct()
-        logger.info(f"Reading master data from file: {MASTER_CSV_FILE}")
         df_master = pd.read_csv(MASTER_CSV_FILE, low_memory=False)
-        logger.info(f"Master CSV loaded: {df_master.shape[0]} rows, {df_master.shape[1]} columns")
-    
-    
-        index_symbols = df_master[
-            (df_master['EXCH_ID'] == 'NSE') & 
-            (df_master['SEGMENT'] == 'I') & 
-            (df_master['INSTRUMENT_TYPE'] == 'INDEX') & 
-            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
-        ]
-        index_symbol_to_id.update(index_symbols.set_index('UNDERLYING_SYMBOL')['SECURITY_ID'].to_dict())
-    
+        
+        index_symbol_to_id.clear()
+        index_symbol_to_id["NIFTY"] = "13"
+        index_symbol_to_id["SENSEX"] = "51" 
+        
+        nifty_exp = str(get_expiry_date("NIFTY"))    
+        sensex_exp = str(get_expiry_date("SENSEX"))  
+        relevant_expiries = [nifty_exp, sensex_exp]
+        logger.info(f"Filtering for expiries: {relevant_expiries}")
+
+        expiry_col = 'SM_EXPIRY_DATE' if 'SM_EXPIRY_DATE' in df_master.columns else 'EXPIRY_DATE'
+        df_master[expiry_col] = pd.to_datetime(df_master[expiry_col], errors='coerce').dt.strftime('%Y-%m-%d')
+        
+        # --- FIX: SENSEX ki IDs (1, 51) aur BSESEX ko bhi filter mein allow karein ---
+        valid_search_symbols = list(trading_symbols) + ["1", "51", "BSESEX", "BSXOPT"]
+        
         option_df = df_master[
-            (df_master['EXCH_ID'] == 'NSE') & 
+            (df_master['EXCH_ID'].isin(['NSE', 'BSE'])) & 
             (df_master['SEGMENT'] == 'D') & 
             (df_master['INSTRUMENT'] == 'OPTIDX') & 
-            (df_master['INSTRUMENT_TYPE'] == 'OP') & 
-            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(trading_symbols))
+            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(valid_search_symbols)) &
+            (df_master[expiry_col].isin(relevant_expiries)) 
         ].copy()
-    
-    
-        if expiry_date:
-            option_df['SM_EXPIRY_DATE'] = pd.to_datetime(option_df['SM_EXPIRY_DATE'], errors='coerce').dt.date
-            option_df = option_df[option_df['SM_EXPIRY_DATE'] == expiry_date]
-            logger.info(f"Filtered option contracts by expiry {expiry_date}, count: {option_df.shape[0]}")
-    
-        option_symbol_to_id.update(
-            {str(k).strip().upper(): int(v) for k, v in option_df.set_index('SYMBOL_NAME')['SECURITY_ID'].to_dict().items()}
-        )
-    
-        for _, row in option_df.iterrows():
-            expiry_str = pd.to_datetime(row['SM_EXPIRY_DATE'], errors='coerce').strftime('%Y-%m-%d')
-            key = (row['UNDERLYING_SYMBOL'].strip().upper(), expiry_str, row['OPTION_TYPE'].strip().upper(), float(row['STRIKE_PRICE']))
-            option_cache[key] = {
-                'SECURITY_ID': int(row['SECURITY_ID']),
-                'SYMBOL_NAME': row['SYMBOL_NAME'].strip().upper(),
-                'LOT_SIZE': int(row.get('LOT_SIZE', 1))
-            }
+
+        # Check karein ki SENSEX mila ya nahi
+        found_symbols = option_df['UNDERLYING_SYMBOL'].unique()
+        logger.info(f"Unique symbols found in filtered data: {found_symbols}")
+
         preprocess_option_map(option_df)
         
+        logger.info(f"Master Data loaded successfully for {trading_symbols}. Total Contracts: {len(option_df)}")
+        
     except Exception as e:
-        logger.error(f"Critical error loading CSV: {e}. Bot will use manual NIFTY ID '13'.")
-
-    logger.info(f"Final Loaded Index IDs: {index_symbol_to_id}")
+        logger.error(f"Critical error loading CSV: {e}")
 
 def preprocess_option_map(option_df):
-    
     global preprocessed_option_map
     preprocessed_option_map.clear()
-    option_df['SM_EXPIRY_DATE_FORMATTED'] = pd.to_datetime(option_df['SM_EXPIRY_DATE'], errors='coerce').dt.strftime('%Y-%m-%d')
+    
+    # Expiry column pehchanne ka logic
+    expiry_col = 'SM_EXPIRY_DATE' if 'SM_EXPIRY_DATE' in option_df.columns else 'EXPIRY_DATE'
+    option_df['FORMATTED_EXPIRY'] = pd.to_datetime(option_df[expiry_col], errors='coerce').dt.strftime('%Y-%m-%d')
 
     for _, row in option_df.iterrows():
+        if pd.isna(row['FORMATTED_EXPIRY']):
+            continue
+
+        # --- SABSE ZARURI FIX YAHAN HAI ---
+        raw_symbol_name = str(row.get('SYMBOL_NAME', '')).strip().upper()
+        raw_underlying = str(row.get('UNDERLYING_SYMBOL', '')).strip().upper()
+        
+        # Agar Symbol Name 'BSXOPT' hai toh woh 100% SENSEX hai
+        if "BSXOPT" in raw_symbol_name or raw_underlying in ["SENSEX", "1", "51", "BSESEX"]:
+            underlying = "SENSEX"
+        elif "NIFTY" in raw_symbol_name or raw_underlying in ["NIFTY", "13"]:
+            underlying = "NIFTY"
+        else:
+            underlying = raw_underlying
+
+        # Key banaiye (Symbol, Expiry, Type)
         key = (
-            row['UNDERLYING_SYMBOL'].strip().upper(),
-            row['SM_EXPIRY_DATE_FORMATTED'],
-            row['OPTION_TYPE'].strip().upper()
+            underlying,
+            row['FORMATTED_EXPIRY'],
+            str(row['OPTION_TYPE']).strip().upper()
         )
+        
         entry = {
             'strike': float(row['STRIKE_PRICE']),
             'SECURITY_ID': int(row['SECURITY_ID']),
-            'SYMBOL_NAME': row['SYMBOL_NAME'].strip().upper(),
-            'LOT_SIZE': int(row.get('LOT_SIZE', 1))
+            'SYMBOL_NAME': raw_symbol_name,
+            'LOT_SIZE': int(row.get('LOT_SIZE', 20 if underlying == "SENSEX" else 0)) 
         }
         preprocessed_option_map.setdefault(key, []).append(entry)
 
+    # Strikes sort karein taaki ATM sahi mile
     for key in preprocessed_option_map:
         preprocessed_option_map[key].sort(key=lambda x: x['strike'])
 
@@ -245,19 +244,29 @@ def get_lot_size_for_security(security_id):
 def get_strike_for_security(security_id):
     for key in option_cache.keys():
         if option_cache[key]['SECURITY_ID'] == security_id:
-            return key[3]  # strike is fourth element of key tuple
+            return key[3]  
     return None
 
 def get_option_type_for_security(security_id):
     for key in option_cache.keys():
         if option_cache[key]['SECURITY_ID'] == security_id:
-            return key[2]  # option type is third element of key tuple
+            return key[2]  
     return None
     
 def get_instrument_id(symbol):
-    # STEP 1: Hardcode Check (Sabse Pehle)
-    if symbol == "NIFTY" or symbol == "Nifty 50":
-        return 13  # Yahan humne jabardasti 13 bhej diya
+    clean_symbol = symbol.strip().upper()
 
-    # STEP 2: Agar NIFTY nahi hai, to dictionary me dhundo
-    return index_symbol_to_id.get(symbol)
+    if clean_symbol == "NIFTY 50":
+        clean_symbol = "NIFTY"
+    elif clean_symbol == "BSE SENSEX":
+        clean_symbol = "SENSEX"
+    elif clean_symbol == "NIFTY BANK":
+        clean_symbol = "BANKNIFTY"
+    
+    sec_id = index_symbol_to_id.get(clean_symbol)
+    
+    if sec_id:
+        return int(sec_id)
+    else:
+        logging.error(f"Instrument ID not found for symbol: {symbol}")
+        return None
