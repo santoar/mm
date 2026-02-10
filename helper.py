@@ -900,7 +900,56 @@ RETRY_INTERVAL = 3
 def poll_and_update_transit_orders():
     logging.info("Polling started")
     changes = []
-    today = datetime.now().date().isoformat()
+    today = get_current_ist_time().strftime("%Y-%m-%d")
+    broker_positions = fetch_broker_positions_list()
+    
+    if broker_positions:
+        try:
+            db_trades = supabase.table("trade_log").select("trading_symbol")\
+                .eq("order_status", "open").eq("timestamp", today).execute()
+            existing_symbols = {row['trading_symbol'] for row in (db_trades.data or [])}
+            
+            for pos in broker_positions:
+                p_type = pos.get("positionType", "").upper()
+                qty = int(pos.get("netQty", 0))
+                t_sym = pos.get("tradingSymbol")
+                
+                if p_type in ["LONG", "SHORT"] and qty != 0 and t_sym not in existing_symbols:
+                    logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
+                    
+                    parts = t_sym.split('-')
+                    base_sym = parts[0]
+                    strike = 0
+                    o_type = "CE"
+                    try:
+                        strike = float(parts[2]) if len(parts) > 2 else 0
+                        o_type = parts[3] if len(parts) > 3 else "CE"
+                    except: pass
+
+                    new_trade = {
+                        "timestamp": today,
+                        "symbol": base_sym,
+                        "trading_symbol": t_sym,
+                        "option_type": o_type,
+                        "strike": strike,
+                        "quantity": abs(qty),
+                        "lot_size": abs(qty), # Safe default
+                        "trade_type": "live",
+                        "order_status": "open",
+                        "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
+                        "entry_price": float(pos.get("buyAvg") or 0),
+                        "exit_price": 0.0,
+                        "exit_time": "00:00:00",
+                        "reason": "auto_sync",
+                        "option_security_id": int(pos.get("securityId", 0)),
+                        "pnl": 0.0,
+                        "capital_used": float(pos.get("buyAvg") or 0) * abs(qty)
+                    }
+                    save_trade_data_async(new_trade)
+                    existing_symbols.add(t_sym) # Duplicate insert rokne ke liye
+        except Exception as e:
+            logging.error(f"Auto-sync error: {e}")
+    
     try:
         resp = supabase.table("trade_log").select("*")\
             .in_("order_status", ["open", "transit", "pending"])\
