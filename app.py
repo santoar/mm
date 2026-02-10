@@ -404,46 +404,59 @@ def get_live_positions():
     live_positions = []
     paper_positions = []
     
-    if market_data_cache:
-        for trade in all_trades:
-            try:
-                sec_id = str(trade.get("option_security_id"))
+    for trade in all_trades:
+        try:
+            sec_id = str(trade.get("option_security_id"))
+            
+            
+            current_ltp = 0
+            if market_data_cache and sec_id in market_data_cache:
                 current_ltp = market_data_cache.get(sec_id, 0)
-                entry_price = float(trade.get("entry_price") or 0)
-                quantity = int(trade.get("quantity") or 0)
-                lot_size = int(trade.get("lot_size") or 0)
+            
+            
+            entry_price = float(trade.get("entry_price") or 0)
+            quantity = int(trade.get("quantity") or 0)
+            lot_size = int(trade.get("lot_size") or 0)
+            
+            
+            if current_ltp > 0:
                 pnl = (float(current_ltp) - entry_price) * quantity * lot_size
+            else:
+                pnl = 0
 
-                t = {
-                    "id": trade.get("id"),
-                    "timestamp": trade.get("timestamp"),
-                    "symbol": trade.get("symbol"),
-                    "trading_symbol": trade.get("trading_symbol", ""),
-                    "option_type": trade.get("option_type"),
-                    "strike": trade.get("strike"),
-                    "quantity": quantity,
-                    "lot_size": lot_size,
-                    "trade_type": trade.get("trade_type"),
-                    "order_status": trade.get("order_status"),
-                    "entry_time": trade.get("entry_time"),
-                    "entry_price": entry_price,
-                    "ltp": current_ltp,
-                    "exit_price": trade.get("exit_price"),
-                    "exit_time": trade.get("exit_time"),
-                    "reason": trade.get("reason"),
-                    "pnl": round(pnl, 2),
-                    "capital_used": trade.get("capital_used"),
-                    "option_security_id": trade.get("option_security_id"),
-                    "order_id": trade.get("order_id")
-                }
-                if trade.get("trade_type") == "live":
-                    live_positions.append(t)
-                elif trade.get("trade_type") == "paper":
-                    paper_positions.append(t)
+            t = {
+                "id": trade.get("id"),
+                "timestamp": trade.get("timestamp"),
+                "symbol": trade.get("symbol"),
+                "trading_symbol": trade.get("trading_symbol", ""),
+                "option_type": trade.get("option_type"),
+                "strike": trade.get("strike"),
+                "quantity": quantity,
+                "lot_size": lot_size,
+                "trade_type": trade.get("trade_type"),
+                "order_status": trade.get("order_status"),
+                "entry_time": trade.get("entry_time"),
+                "entry_price": entry_price,
+                "ltp": current_ltp,
+                "exit_price": trade.get("exit_price"),
+                "exit_time": trade.get("exit_time"),
+                "reason": trade.get("reason"),
+                "pnl": round(pnl, 2),
+                "capital_used": trade.get("capital_used"),
+                "option_security_id": trade.get("option_security_id"),
+                "order_id": trade.get("order_id")
+            }
+            
+            if trade.get("trade_type") == "live":
+                live_positions.append(t)
+            elif trade.get("trade_type") == "paper":
+                paper_positions.append(t)
 
-            except Exception as e:
-                print(f"Error processing trade {trade.get('id')}: {e}")
-                continue
+        except Exception as e:
+            print(f"Error processing trade {trade.get('id')}: {e}")
+            continue
+
+    
     return jsonify({
         "live_positions": live_positions,
         "paper_positions": paper_positions
