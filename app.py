@@ -389,40 +389,43 @@ def update_ltp():
 
 @app.route("/positions/live", methods=["GET"])
 def get_live_positions():
-    today = datetime.now().date().isoformat()
+    # Debugging ke liye hum Date filter hata rahe hain
+    # today = get_current_ist_time().date().isoformat()
+    
     try:
+        # Sirf status check karenge, date nahi
         resp = supabase.table("trade_log").select("*")\
-            .in_("order_status", ["open", "pending"])\
+            .in_("order_status", ["open", "pending", "transit"])\
             .in_("trade_type", ["live", "paper"])\
-            .eq("timestamp", today)\
             .execute()
+            
         all_trades = resp.data or []
+        print(f"DEBUG: Found {len(all_trades)} trades in DB") # Ye logs mein dikhega
     except Exception as e:
         print("Error fetching live trades:", e)
         all_trades = []
 
-    live_positions = []
-    paper_positions = []
+    final_positions_list = []
     
+    # Loop ab bina kisi condition ke chalega
     for trade in all_trades:
         try:
             sec_id = str(trade.get("option_security_id"))
             
-            
+            # LTP fetch logic (Safe Mode)
             current_ltp = 0
             if market_data_cache and sec_id in market_data_cache:
                 current_ltp = market_data_cache.get(sec_id, 0)
             
-            
+            # Data parsing
             entry_price = float(trade.get("entry_price") or 0)
             quantity = int(trade.get("quantity") or 0)
             lot_size = int(trade.get("lot_size") or 0)
             
-            
+            # PnL Calculation
+            pnl = 0
             if current_ltp > 0:
                 pnl = (float(current_ltp) - entry_price) * quantity * lot_size
-            else:
-                pnl = 0
 
             t = {
                 "id": trade.get("id"),
@@ -438,29 +441,20 @@ def get_live_positions():
                 "entry_time": trade.get("entry_time"),
                 "entry_price": entry_price,
                 "ltp": current_ltp,
-                "exit_price": trade.get("exit_price"),
-                "exit_time": trade.get("exit_time"),
-                "reason": trade.get("reason"),
                 "pnl": round(pnl, 2),
                 "capital_used": trade.get("capital_used"),
                 "option_security_id": trade.get("option_security_id"),
                 "order_id": trade.get("order_id")
             }
             
-            if trade.get("trade_type") == "live":
-                live_positions.append(t)
-            elif trade.get("trade_type") == "paper":
-                paper_positions.append(t)
+            final_positions_list.append(t)
 
         except Exception as e:
             print(f"Error processing trade {trade.get('id')}: {e}")
             continue
 
-    
-    return jsonify({
-        "live_positions": live_positions,
-        "paper_positions": paper_positions
-    })
+    # Sidha list return kar rahe hain taaki frontend direct dikha sake
+    return jsonify(final_positions_list)
 
 @app.route("/positions/closed", methods=["GET"])
 def get_closed_positions():

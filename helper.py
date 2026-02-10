@@ -443,23 +443,28 @@ def build_provisional_trade_data(order_id, security_id, txn_type, qty, provision
         strike = get_strike_for_security(security_id)
         option_type = get_option_type_for_security(security_id)
         
-        broker_quantity = int(qty)
-        lot_size = get_lot_size_for_security(security_id)
-        num_lots = int(broker_quantity // lot_size) if lot_size else broker_quantity
-        entry_price = 0.0
+        lot_size = get_lot_size_for_security(security_id) or 1
+        input_qty = int(qty)
+        
+        if input_qty < lot_size and lot_size > 1:
+            final_quantity = input_qty * lot_size
+        else:
+            final_quantity = input_qty
 
-        capital_used = entry_price * lot_size * num_lots  
+        entry_price = 0.0
+        capital_used = entry_price * final_quantity
 
         base_symbol_only = re.split(r'[-\s]', symbol_raw)[0].upper()
         trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
-
+        is_paper = str(get_setting("paper_trade", "false")).lower() == "true"
+        
         trade_data = {
             "order_id": order_id,
             "symbol": base_symbol_only, 
             "trading_symbol": trading_symbol,
             "option_security_id": security_id,
-            "trade_type": "live",
-            "quantity": num_lots,
+            "trade_type": "paper" if is_paper else "live",
+            "quantity": final_quantity,
             "order_status": provisional_status,   
             "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
             "entry_price": entry_price,  
@@ -490,10 +495,10 @@ def build_trade_data_for_order(order_id, security_id, txn_type, qty, executed_pr
         
         trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
         
-        broker_quantity = int(qty)
+        final_quantity = int(qty) 
         lot_size = get_lot_size_for_security(security_id) or 1
-        num_lots = int(broker_quantity // lot_size) if lot_size else broker_quantity
-        capital_used = float(executed_price) * lot_size * num_lots
+                
+        capital_used = float(executed_price) * final_quantity
         
         trade_data = {
             "order_id": order_id,
@@ -501,12 +506,12 @@ def build_trade_data_for_order(order_id, security_id, txn_type, qty, executed_pr
             "trading_symbol": trading_symbol,
             "option_security_id": security_id,
             "trade_type": "live",
-            "quantity": num_lots,
+            "quantity": final_quantity,
             "order_status": "open",
             "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
             "entry_price": executed_price,
             "timestamp": get_current_ist_time().strftime("%Y-%m-%d"),
-            "lot_size": broker_quantity,  
+            "lot_size": lot_size,
             "capital_used": capital_used,
             "strike": strike,
             "option_type": option_type,
