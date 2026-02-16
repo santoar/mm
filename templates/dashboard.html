@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Trading Bot Dashboard</title>
+<title>MSE Trading Bot Dashboard</title>
 <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" />
-<!-- jQuery और jQuery UI JS -->
+
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 <style>
@@ -456,15 +456,16 @@ function capitalizeFirst(text) {
 async function loadPositions() {
   try {
     const openResp = await fetch("/positions/live");
-    const respJson = await openResp.json();
-    const openData = [
-	  ...(respJson.live_positions || []),
-	  ...(respJson.paper_positions || [])
-	];
-
+    const openData = await openResp.json()
+    
     const tbodyOpen = document.querySelector("#open_positions_table tbody");
     tbodyOpen.innerHTML = "";
-
+	
+	if (!Array.isArray(openData)) {
+        console.error("Invalid data format received:", openData);
+        return;
+    }
+	
     openData.forEach(trade => {
       const tr = document.createElement("tr");
 
