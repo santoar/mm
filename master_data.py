@@ -21,7 +21,7 @@ loaded_expiry_date = None
 
 # Define your trading stocks list here (39 stocks)
 trading_symbols = set([
-    "NIFTY", "SENSEX",
+    "NIFTY", "SENSEX", "FINNIFTY",
 ])
 
 logger = logging.getLogger(__name__)
@@ -80,45 +80,49 @@ def load_master_data(force_reload=False):
         fetch_live_master_data_direct()
         df_master = pd.read_csv(MASTER_CSV_FILE, low_memory=False)
         
+        # --- IDs Setup ---
         index_symbol_to_id.clear()
         index_symbol_to_id["NIFTY"] = "13"
+        index_symbol_to_id["FINNIFTY"] = "27"  # Correct ID
         index_symbol_to_id["SENSEX"] = "51" 
         
-        nifty_exp = str(get_expiry_date("NIFTY"))    
-        sensex_exp = str(get_expiry_date("SENSEX"))  
-        relevant_expiries = [nifty_exp, sensex_exp]
-        logger.info(f"Filtering for expiries: {relevant_expiries}")
-
+        # Date column format fix
         expiry_col = 'SM_EXPIRY_DATE' if 'SM_EXPIRY_DATE' in df_master.columns else 'EXPIRY_DATE'
         df_master[expiry_col] = pd.to_datetime(df_master[expiry_col], errors='coerce').dt.strftime('%Y-%m-%d')
         
-        # --- FIX: SENSEX ki IDs (1, 51) aur BSESEX ko bhi filter mein allow karein ---
-        valid_search_symbols = list(trading_symbols) + ["1", "51", "BSESEX", "BSXOPT"]
-        
+        # Aaj ki date (Purane contracts filter karne ke liye)
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+                
+        valid_search_ids = ["13", "27", "51"] # Nifty, FinNifty, Sensex IDs
+        valid_search_names = ["NIFTY", "FINNIFTY", "SENSEX", "BSESEX", "BSXOPT", "NIFTY FIN SERVICE"]
+
         option_df = df_master[
             (df_master['EXCH_ID'].isin(['NSE', 'BSE'])) & 
             (df_master['SEGMENT'] == 'D') & 
             (df_master['INSTRUMENT'] == 'OPTIDX') & 
-            (df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(valid_search_symbols)) &
-            (df_master[expiry_col].isin(relevant_expiries)) 
+            # Ya toh ID match kare, ya Naam match kare
+            (
+                df_master['SECURITY_ID'].astype(str).isin(valid_search_ids) | 
+                df_master['UNDERLYING_SYMBOL'].str.strip().str.upper().isin(valid_search_names)
+            ) &
+            # Sirf purani expiry hatayenge, aane wali saari rakhenge
+            (df_master[expiry_col] >= today_str) 
         ].copy()
 
-        # Check karein ki SENSEX mila ya nahi
         found_symbols = option_df['UNDERLYING_SYMBOL'].unique()
-        logger.info(f"Unique symbols found in filtered data: {found_symbols}")
+        logger.info(f"Unique symbols found in CSV (All Future Expiries): {found_symbols}")
 
         preprocess_option_map(option_df)
         
-        logger.info(f"Master Data loaded successfully for {trading_symbols}. Total Contracts: {len(option_df)}")
+        logger.info(f"Master Data loaded successfully. Total Contracts: {len(option_df)}")
         
     except Exception as e:
         logger.error(f"Critical error loading CSV: {e}")
-
 def preprocess_option_map(option_df):
     global preprocessed_option_map
     preprocessed_option_map.clear()
     
-    # Expiry column pehchanne ka logic
     expiry_col = 'SM_EXPIRY_DATE' if 'SM_EXPIRY_DATE' in option_df.columns else 'EXPIRY_DATE'
     option_df['FORMATTED_EXPIRY'] = pd.to_datetime(option_df[expiry_col], errors='coerce').dt.strftime('%Y-%m-%d')
 
@@ -126,19 +130,27 @@ def preprocess_option_map(option_df):
         if pd.isna(row['FORMATTED_EXPIRY']):
             continue
 
-        # --- SABSE ZARURI FIX YAHAN HAI ---
         raw_symbol_name = str(row.get('SYMBOL_NAME', '')).strip().upper()
         raw_underlying = str(row.get('UNDERLYING_SYMBOL', '')).strip().upper()
         
-        # Agar Symbol Name 'BSXOPT' hai toh woh 100% SENSEX hai
-        if "BSXOPT" in raw_symbol_name or raw_underlying in ["SENSEX", "1", "51", "BSESEX"]:
+        # --- SMART DETECTION LOGIC ---
+        underlying = None
+        
+        # Sensex Check
+        if "BSXOPT" in raw_symbol_name or raw_underlying in ["SENSEX", "BSE SENSEX", "1", "51", "BSESEX"]:
             underlying = "SENSEX"
-        elif "NIFTY" in raw_symbol_name or raw_underlying in ["NIFTY", "13"]:
+        
+        # Nifty Check (Ensure BANKNIFTY doesn't get mixed)
+        elif ("NIFTY" in raw_symbol_name or raw_underlying in ["NIFTY", "NIFTY 50", "13"]) and "FIN" not in raw_symbol_name and "BANK" not in raw_symbol_name:
             underlying = "NIFTY"
-        else:
-            underlying = raw_underlying
+            
+        # FINNIFTY Check (Expanded names)
+        elif "FINNIFTY" in raw_symbol_name or "FIN" in raw_symbol_name or raw_underlying in ["FINNIFTY", "NIFTY FIN SERVICE", "27"]:
+            underlying = "FINNIFTY"
+            
+        if not underlying:
+            continue # Agar kaam ka symbol nahi hai toh skip karo
 
-        # Key banaiye (Symbol, Expiry, Type)
         key = (
             underlying,
             row['FORMATTED_EXPIRY'],
@@ -153,7 +165,7 @@ def preprocess_option_map(option_df):
         }
         preprocessed_option_map.setdefault(key, []).append(entry)
 
-    # Strikes sort karein taaki ATM sahi mile
+    # Sort strikes
     for key in preprocessed_option_map:
         preprocessed_option_map[key].sort(key=lambda x: x['strike'])
 
@@ -230,6 +242,8 @@ def get_lot_size(symbol, expiry, strike, option_type):
         
     elif "NIFTY" in symbol_upper and "BANK" not in symbol_upper:
         return 65
+    elif "FINNIFTY" in symbol_upper and "BANK" not in symbol_upper:
+        return 60
         
     try:
         expiry_str = str(expiry)
