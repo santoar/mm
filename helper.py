@@ -184,7 +184,16 @@ def place_order(security_id, txn_type, qty=1):
         logging.error(f"Order Cancelled: LTP missing for {security_id}")
         return None
     
-    price = round_to_0_05(ltp)
+    buffer_points = 2.0  
+    if ltp < 100:
+        buffer_points = 1.0
+
+    if txn_type.upper() == "BUY":
+        order_type = "LIMIT"
+        price = round_to_0_05(ltp + buffer_points) 
+    else:
+        order_type = "MARKET"
+        price = 0  
     
     symbol_raw = get_symbol_from_security_id(security_id)
     expiry_date = get_expiry_date()
@@ -201,8 +210,7 @@ def place_order(security_id, txn_type, qty=1):
         "access-token": get_setting("dhan_access_token"),
         "client-id": get_setting("dhan_client_id"),
     }
-    order_type = "MARKET" if txn_type.upper() == "SELL" else "LIMIT"
-    
+       
     body = {
         "dhanClientId": client_id,
         "transactionType": txn_type.upper(),
@@ -212,7 +220,7 @@ def place_order(security_id, txn_type, qty=1):
         "validity": "DAY",
         "securityId": str(security_id),
         "quantity": int(qty),
-        "price": price if order_type == "LIMIT" else 0,
+        "price": price,
         "tradingSymbol": trading_symbol
     }
     try:
@@ -221,7 +229,9 @@ def place_order(security_id, txn_type, qty=1):
         resp_json = response.json()        
         
         if resp_json.get("orderId"):
-            resp_json["executed_price"] = price 
+            executed_price = price if order_type == "LIMIT" else ltp
+            
+            resp_json["executed_price"] = executed_price
             resp_json["tradingSymbol"] = trading_symbol
             return resp_json
         else:
@@ -485,6 +495,12 @@ def build_provisional_trade_data(order_id, security_id, txn_type, qty, provision
 
 def build_trade_data_for_order(order_id, security_id, txn_type, qty, executed_price):
     try:
+        symbol_raw = get_symbol_from_security_id(security_id)
+
+        if not symbol_raw:
+            logging.error(f"Symbol not found for security_id: {security_id} in build_trade_data")
+            return None
+            
         expiry_date = get_expiry_date()  
         expiry = expiry_date.strftime("%b").upper() if expiry_date else ""
         year = expiry_date.strftime("%Y") if expiry_date else ""

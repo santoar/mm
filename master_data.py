@@ -222,12 +222,40 @@ def get_atm_strike(ltp, step=50):
     atm_option_security_cache = {}
 
 def get_symbol_from_security_id(security_id):
+    global option_cache, index_symbol_to_id, df_master
+    
+    try:
+        sec_id_int = int(security_id)
+        sec_id_str = str(security_id).strip()
+    except:
+        return None
+
     for key, val in option_cache.items():
-        if val['SECURITY_ID'] == security_id:
+        if val.get('SECURITY_ID') == sec_id_int:
             return key[0]  
-    for symbol, sec_id in index_symbol_to_id.items():
-        if sec_id == security_id:
+    
+    for symbol, sid in index_symbol_to_id.items():
+        if str(sid) == sec_id_str:
             return symbol
+    
+    if df_master is not None and not df_master.empty:
+        try:
+            row = df_master[df_master['SECURITY_ID'] == sec_id_int]
+            
+            if not row.empty:
+                found_symbol = str(row.iloc[0].get('UNDERLYING_SYMBOL', '')).strip().upper()
+                
+                if found_symbol == "NIFTY 50" or found_symbol == "NIFTY": return "NIFTY"
+                if found_symbol == "NIFTY BANK" or found_symbol == "BANKNIFTY": return "BANKNIFTY"
+                if found_symbol == "BSE SENSEX" or found_symbol == "SENSEX": return "SENSEX"
+                if found_symbol == "FINNIFTY" or found_symbol == "NIFTY FIN SERVICE": return "FINNIFTY"
+                                
+                return found_symbol
+                
+        except Exception as e:
+            logging.error(f"Error searching symbol in CSV for {security_id}: {e}")
+
+    logging.error(f"CRITICAL: Symbol NOT found anywhere for ID: {security_id}")
     return None
 
 def get_lot_size(symbol, expiry, strike, option_type):
