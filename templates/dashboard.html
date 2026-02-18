@@ -458,20 +458,15 @@ async function loadPositions() {
     const openResp = await fetch("/positions/live");
     const openData = await openResp.json()
     
+	const safeOpenData = Array.isArray(openData) ? openData : [];
     const tbodyOpen = document.querySelector("#open_positions_table tbody");
     tbodyOpen.innerHTML = "";
 	
-	if (!Array.isArray(openData)) {
-        console.error("Invalid data format received:", openData);
-        return;
-    }
-	
-    openData.forEach(trade => {
+	safeOpenData.forEach(trade => {
       const tr = document.createElement("tr");
 
       let statusRaw = (trade.order_status || "").trim();
       let statusLower = statusRaw.toLowerCase();
-      let statusText = capitalizeFirst(statusRaw);
       let statusClass = "";
       let exitDisabled = "";
 
@@ -484,15 +479,22 @@ async function loadPositions() {
       } else if (statusLower === "open") {
         statusClass = "open-status";
       }
-
+	  
+	  let qty = parseInt(trade.quantity || 0);
+      let lotSize = parseInt(trade.lot_size || 1);
+      
+      let displayQty = (qty >= lotSize) ? (qty / lotSize).toFixed(0) : qty;
+	  
       tr.innerHTML = `
         <td>${trade.timestamp || ""}</td>
         <td>${trade.symbol || ""}</td>
-		<td>${trade.trading_symbol || ""}</td>
+        <td>${trade.trading_symbol || ""}</td>
         <td>${trade.option_type || ""}</td>
         <td>${trade.strike || ""}</td>
-        <td>${trade.quantity || ""}</td>
-		<td>${trade.lot_size || ""}</td>
+        
+        <td style="font-weight:bold; color:#007bff;">${displayQty}</td>
+        
+        <td>${trade.lot_size || ""}</td>
         <td>${trade.entry_time || ""}</td>
         <td>${parseFloat(trade.capital_used || 0).toFixed(2)}</td>
         <td>${parseFloat(trade.entry_price || 0).toFixed(2)}</td>
@@ -527,7 +529,9 @@ async function loadPositions() {
 	const tbodyClosed = document.querySelector("#closed_positions_table tbody");
     tbodyClosed.innerHTML = "";
 
-    closedData.forEach(trade => {
+    const safeClosedData = Array.isArray(closedData) ? closedData : [];
+
+    safeClosedData.forEach(trade => {
       const tr = document.createElement("tr");
 
       let statusText = capitalizeFirst(trade.order_status || "");
@@ -535,14 +539,19 @@ async function loadPositions() {
       if (["Closed", "Failed"].includes(statusText)) {
         statusClass = "status-red";
       }
+	  let qty = parseInt(trade.quantity || 0);
+      let lotSize = parseInt(trade.lot_size || 1);
+      let displayQty = (qty >= lotSize) ? (qty / lotSize).toFixed(0) : qty;
 
       tr.innerHTML = `
         <td>${trade.symbol || ""}</td>
-		<td>${trade.trading_symbol || ""}</td>
+        <td>${trade.trading_symbol || ""}</td>
         <td>${trade.option_type || ""}</td>
         <td>${trade.strike_price || trade.strike || ""}</td>
-        <td>${trade.quantity || ""}</td>
-		<td>${trade.lot_size || ""}</td>
+        
+        <td style="font-weight:bold;">${displayQty}</td>
+        
+        <td>${trade.lot_size || ""}</td>
         <td>${trade.entry_time || ""}</td>
         <td>${trade.exit_time || ""}</td>
         <td>${parseFloat(trade.entry_price || 0).toFixed(2)}</td>
@@ -551,7 +560,6 @@ async function loadPositions() {
         <td class="${statusClass}">${statusText}</td>
       `;
 
-      // Color code Closed PNL
       const pnlVal = parseFloat(trade.pnl || 0);
       const pnlCell = tr.querySelector('.pnl');
       if (pnlVal > 0) { pnlCell.classList.add('pnl-positive'); }
@@ -568,6 +576,9 @@ async function loadPositions() {
 fetchSummary();
 setInterval(loadPositions, 5000);
 
+function capitalizeFirst(string) {
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
 // Exit button handler here as before, unchanged
 
 
