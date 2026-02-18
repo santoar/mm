@@ -962,6 +962,7 @@ def poll_and_update_transit_orders():
     today = get_current_ist_time().strftime("%Y-%m-%d")
     broker_positions = fetch_broker_positions_list()
     
+    # 1. Check for Missing Positions (Auto-Sync)
     if broker_positions:
         try:
             db_trades = supabase.table("trade_log").select("trading_symbol")\
@@ -970,7 +971,7 @@ def poll_and_update_transit_orders():
             
             for pos in broker_positions:
                 p_type = pos.get("positionType", "").upper()
-                qty_shares = int(pos.get("netQty", 0))
+                qty_shares = int(pos.get("netQty", 0)) # <--- यहाँ नाम qty_shares है
                 t_sym = pos.get("tradingSymbol")
                 sec_id = int(pos.get("securityId", 0))
                 
@@ -979,7 +980,7 @@ def poll_and_update_transit_orders():
                     
                     lot_size = get_lot_size_for_security(sec_id) or 1
                     qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
-                                        
+                                                    
                     parts = t_sym.split('-')
                     base_sym = parts[0]
                     strike = 0
@@ -1006,13 +1007,16 @@ def poll_and_update_transit_orders():
                         "reason": "auto_sync",
                         "option_security_id": int(pos.get("securityId", 0)),
                         "pnl": 0.0,
-                        "capital_used": float(pos.get("buyAvg") or 0) * abs(qty)
+                        # --- FIX IS HERE ---
+                        "capital_used": float(pos.get("buyAvg") or 0) * abs(qty_shares) 
+                        # -------------------
                     }
                     save_trade_data_async(new_trade)
-                    existing_symbols.add(t_sym) # Duplicate insert rokne ke liye
+                    existing_symbols.add(t_sym)
         except Exception as e:
             logging.error(f"Auto-sync error: {e}")
     
+    # 2. DB Transactions Fetch
     try:
         resp = supabase.table("trade_log").select("*")\
             .in_("order_status", ["open", "transit", "pending"])\
@@ -1026,6 +1030,7 @@ def poll_and_update_transit_orders():
     access_token = get_setting("dhan_access_token")
     client_id = get_setting("dhan_client_id")
     
+    # 3. Process Trades
     for trade in trades:
         if trade.get("trade_type") == "paper":
             continue 
@@ -1040,12 +1045,13 @@ def poll_and_update_transit_orders():
         status = None
                 
         def map_status(status):
-                if status in ["REJECTED", "FAILED", "CANCELLED"]: return "failed"
-                if status == "CONFIRM": return "pending"
-                if status == "TRANSIT": return "transit"
-                if status in ["TRADED", "PART_TRADED"]: return "open"
-                return "unknown"
+            if status in ["REJECTED", "FAILED", "CANCELLED"]: return "failed"
+            if status == "CONFIRM": return "pending"
+            if status == "TRANSIT": return "transit"
+            if status in ["TRADED", "PART_TRADED"]: return "open"
+            return "unknown"
         
+        # 4. Check Order Status
         for i in range(MAX_RETRIES):
             url = f"https://api.dhan.co/v2/orders/{order_id}"
             headers = {
@@ -1064,7 +1070,7 @@ def poll_and_update_transit_orders():
             except Exception as e:
                 logging.error(f"Exception fetching order status for {order_id}: {e}")
                 break
-                        
+            
             mapped_status = map_status(status)
             
             if mapped_status == "failed":
@@ -1092,6 +1098,8 @@ def poll_and_update_transit_orders():
                 else:
                     supabase.table("trade_log").update({"order_status": "transit"}).eq("id", trade["id"]).execute()
                     changes.append({"trade_id": trade["id"], "order_status": "transit"})
+
+    # 5. SYNC OPEN POSITIONS WITH BROKER
     try:
         broker_positions = fetch_broker_positions_list()
         open_trades = supabase.table("trade_log").select("*")\
@@ -1137,7 +1145,7 @@ def poll_and_update_transit_orders():
                     if real_exit_price == 0: real_exit_price = float(pos_data.get("exitPrice", 0.0))
                     if real_exit_price == 0: real_exit_price = float(pos_data.get("ltp", 0.0))
 
-                    
+                    # --- Correcting Quantity on Close ---
                     current_db_qty = int(trade.get("quantity") or 0)
                     lot_size = int(trade.get("lot_size") or 1)
                     
@@ -1151,7 +1159,7 @@ def poll_and_update_transit_orders():
                         "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
                         "exit_price": real_exit_price,
                         "pnl": real_pnl,
-                        "quantity": final_qty_to_save,  
+                        "quantity": final_qty_to_save,
                         "reason": "broker_position_closed"
                     }).eq("id", trade_id).execute()
                     
@@ -1167,7 +1175,7 @@ def poll_and_update_transit_orders():
         return changes
     except Exception as e:
         logging.error(f"Error fetching broker positions or processing trades: {e}")
-        return changes    
+        return changes
                
 def get_index_ltp(symbol): 
     symbol = symbol.upper()
