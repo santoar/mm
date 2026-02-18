@@ -193,18 +193,25 @@ def place_order(security_id, txn_type, qty=1):
         order_type = "MARKET"
         price = 0  
     
-    symbol_raw = get_symbol_from_security_id(security_id)
-    expiry_date = get_expiry_date()
-    expiry = expiry_date.strftime("%b").upper() if expiry_date else ""
-    year = expiry_date.strftime("%Y") if expiry_date else ""
-    strike = get_strike_for_security(security_id)
-    option_type = get_option_type_for_security(security_id)
-    if not strike or not option_type or str(strike) == "None":
-        logging.error(f"CRITICAL: Cannot place order. Strike/OptType missing for SecurityID {security_id}")
-        return None
-    trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
-
-    lot_size = get_lot_size_for_security(security_id) or 1
+    try:
+        symbol_raw = get_symbol_from_security_id(security_id)
+        expiry_date = get_expiry_date()
+        expiry = expiry_date.strftime("%b").upper() if expiry_date else ""
+        year = expiry_date.strftime("%Y") if expiry_date else ""
+        strike = get_strike_for_security(security_id)
+        option_type = get_option_type_for_security(security_id)
+    
+        trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
+    except Exception as e:
+        logging.error(f"Symbol generation error: {e}")
+        trading_symbol = ""
+    
+    lot_size = 1
+    try:
+        lot_size = get_lot_size_for_security(security_id) or 1
+    except:
+        pass
+    
     final_qty = int(qty)
     
     if final_qty < lot_size:
