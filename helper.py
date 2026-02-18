@@ -757,16 +757,54 @@ def find_open_position_with_broker_sync(trading_symbol, option_type=None, today=
 
     open_pos = find_open_position(trading_symbol, option_type, today)
     logging.info(f"find_open_position_with_broker_sync open_pos: {open_pos}")
+    
     paper_trade = str(get_setting("paper_trade", "false")).lower() == "true"
-
+    
     if open_pos and not paper_trade:
-        broker_positions = fetch_broker_positions_list()
-        match = match_broker_position(open_pos, broker_positions)
-        if match:
-            return open_pos
-        else:
-            logging.warning(f"No matching broker position for {open_pos}")
+        broker_positions = fetch_broker_positions_list() or []
+        
+        found_match = False
+        
+        for bp in broker_positions:
+            b_symbol = bp.get("tradingSymbol", "")
+            
+            if b_symbol == open_pos.get('trading_symbol'):
+                found_match = True
+                is_closed = bp.get("positionType", "").upper() == "CLOSED" or int(bp.get("netQty", 0)) == 0
+                
+                if is_closed:
+                    logging.info(f"Sync: Position {b_symbol} is CLOSED on Broker. Updating DB...")
+                    
+                    real_exit_price = float(bp.get("sellAvg", 0.0))  
+                    real_pnl = float(bp.get("realizedProfit", 0.0))  
+                    
+                    if real_exit_price == 0:
+                        real_exit_price = float(bp.get("exitPrice", 0.0))
+
+                    
+                    try:
+                        supabase.table("trade_log").update({
+                            "order_status": "closed",
+                            "exit_price": real_exit_price,
+                            "pnl": real_pnl,
+                            "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
+                            "reason": "broker_sync_auto"
+                        }).eq("id", open_pos.get("id")).execute()
+                        
+                        logging.info("DB updated successfully via Sync.")
+                        return None 
+                        
+                    except Exception as e:
+                        logging.error(f"Sync Update Failed: {e}")
+                        return None
+
+                else:
+                    return open_pos
+
+        if not found_match:
+            logging.warning(f"No matching broker position found for {open_pos.get('trading_symbol')}")
             return None
+
     return open_pos
 
 def check_broker_open_position(trading_symbol, option_type=None, strike=None, security_id=None, force_refresh=False):
@@ -932,12 +970,16 @@ def poll_and_update_transit_orders():
             
             for pos in broker_positions:
                 p_type = pos.get("positionType", "").upper()
-                qty = int(pos.get("netQty", 0))
+                qty_shares = int(pos.get("netQty", 0))
                 t_sym = pos.get("tradingSymbol")
+                sec_id = int(pos.get("securityId", 0))
                 
-                if p_type in ["LONG", "SHORT"] and qty != 0 and t_sym not in existing_symbols:
+                if p_type in ["LONG", "SHORT"] and qty_shares != 0 and t_sym not in existing_symbols:
                     logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
                     
+                    lot_size = get_lot_size_for_security(sec_id) or 1
+                    qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
+                                        
                     parts = t_sym.split('-')
                     base_sym = parts[0]
                     strike = 0
@@ -953,8 +995,8 @@ def poll_and_update_transit_orders():
                         "trading_symbol": t_sym,
                         "option_type": o_type,
                         "strike": strike,
-                        "quantity": abs(qty),
-                        "lot_size": abs(qty), # Safe default
+                        "quantity": qty_lots,
+                        "lot_size": lot_size,
                         "trade_type": "live",
                         "order_status": "open",
                         "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
@@ -986,13 +1028,10 @@ def poll_and_update_transit_orders():
     
     for trade in trades:
         if trade.get("trade_type") == "paper":
-            trade_id = trade.get("id") 
-            logging.info(f"Paper trade detected, trade_id: {trade_id}. Skipping API order_id check.")
             continue 
         else:
             order_id = trade.get("order_id")
             security_id = trade.get("option_security_id")
-            logging.info(f"Checking order_id: {order_id}")
             if not order_id:
                 logging.warning(f"Missing order_id for live trade, skipping: {trade}")
                 continue
@@ -1001,14 +1040,10 @@ def poll_and_update_transit_orders():
         status = None
                 
         def map_status(status):
-                if status in ["REJECTED", "FAILED", "CANCELLED"]:
-                    return "failed"
-                if status == "CONFIRM":
-                    return "pending"
-                if status == "TRANSIT":
-                    return "transit"
-                if status in ["TRADED", "PART_TRADED"]:
-                    return "open"
+                if status in ["REJECTED", "FAILED", "CANCELLED"]: return "failed"
+                if status == "CONFIRM": return "pending"
+                if status == "TRANSIT": return "transit"
+                if status in ["TRADED", "PART_TRADED"]: return "open"
                 return "unknown"
         
         for i in range(MAX_RETRIES):
@@ -1021,129 +1056,105 @@ def poll_and_update_transit_orders():
             try:
                 response = requests.get(url, headers=headers, timeout=5)
                 if response.status_code != 200:
-                    logging.error(f"Failed to fetch order details for {order_id}: {response.status_code}")
                     break
                 data = response.json()
-                if isinstance(data, list):
-                    data = data[0] if data else {}
+                if isinstance(data, list): data = data[0] if data else {}
                 status = data.get("orderStatus", "").upper()
                 executed_price = parse_executed_price(data, str(security_id))
             except Exception as e:
                 logging.error(f"Exception fetching order status for {order_id}: {e}")
                 break
-            logging.info(f"Status for order {order_id}: {status}, Executed price: {executed_price}")
-            
+                        
             mapped_status = map_status(status)
             
             if mapped_status == "failed":
-                try:
-                    supabase.table("trade_log").update(
-                        {"order_status": "failed"}
-                    ).eq("id", trade["id"]).execute()
-                    logging.info(f"Updated trade {trade['id']} to status failed")
-                    changes.append({"trade_id": trade["id"], "order_status": "failed"})
-                except Exception as e:
-                    logging.error(f"DB update exception for failed order {order_id}: {e}")
+                supabase.table("trade_log").update({"order_status": "failed"}).eq("id", trade["id"]).execute()
+                changes.append({"trade_id": trade["id"], "order_status": "failed"})
                 break
-            
             elif mapped_status == "transit":
-                try:
-                    supabase.table("trade_log").update(
-                        {"order_status": "transit"}
-                    ).eq("id", trade["id"]).execute()
-                    logging.info(f"Updated trade {trade['id']} to status transit")
-                    changes.append({"trade_id": trade["id"], "order_status": "transit"})
-                except Exception as e:
-                    logging.error(f"DB update exception for transit order {order_id}: {e}")
+                supabase.table("trade_log").update({"order_status": "transit"}).eq("id", trade["id"]).execute()
+                changes.append({"trade_id": trade["id"], "order_status": "transit"})
                 break
-            
             elif mapped_status == "pending":
-                try:
-                    supabase.table("trade_log").update(
-                        {"order_status": "pending"}
-                    ).eq("id", trade["id"]).execute()
-                    logging.info(f"Updated trade {trade['id']} to status pending")
-                    changes.append({"trade_id": trade["id"], "order_status": "pending"})
-                except Exception as e:
-                    logging.error(f"DB update exception for pending order {order_id}: {e}")
+                supabase.table("trade_log").update({"order_status": "pending"}).eq("id", trade["id"]).execute()
+                changes.append({"trade_id": trade["id"], "order_status": "pending"})
                 break
-            
             elif mapped_status == "open" and executed_price and float(executed_price) > 0:
-                try:
-                    supabase.table("trade_log").update({
-                        "order_status": "open",
-                        "entry_price": float(executed_price),
-                    }).eq("id", trade["id"]).execute()
-                    logging.info(f"Updated trade {trade['id']} to status open with entry_price {executed_price}")
-                    changes.append({"trade_id": trade["id"], "order_status": "open"})
-                except Exception as e:
-                    logging.error(f"DB update exception for open order {order_id}: {e}")
+                supabase.table("trade_log").update({
+                    "order_status": "open",
+                    "entry_price": float(executed_price),
+                }).eq("id", trade["id"]).execute()
+                changes.append({"trade_id": trade["id"], "order_status": "open"})
                 break
             else:
-                logging.warning(f"Retry {i+1}/{MAX_RETRIES} for order {order_id}. Status: {mapped_status}")
                 if i < MAX_RETRIES - 1:
                     time.sleep(RETRY_INTERVAL)
                 else:
-                    try:
-                        supabase.table("trade_log").update(
-                            {"order_status": "transit"}
-                        ).eq("id", trade["id"]).execute()
-                        logging.info(f"Final retry failed for {order_id}. Set to transit.")
-                        changes.append({"trade_id": trade["id"], "order_status": "transit"})
-                    except Exception as e:
-                        logging.error(f"Failed to set transit for {order_id}: {e}")
+                    supabase.table("trade_log").update({"order_status": "transit"}).eq("id", trade["id"]).execute()
+                    changes.append({"trade_id": trade["id"], "order_status": "transit"})
     try:
         broker_positions = fetch_broker_positions_list()
         open_trades = supabase.table("trade_log").select("*")\
             .in_("order_status", ["open", "pending", "transit"])\
             .eq("trade_type", "live").execute().data or []
-        logging.info(f"Checking {len(open_trades)} live trades against {len(broker_positions)} broker positions.")
-
+        
         for trade in open_trades:
             trade_id = trade.get("id")
             order_id = str(trade.get("order_id", "")).strip()
             current_status = trade.get('order_status', '').lower()
                                     
             if current_status in ["pending", "transit"]:
-                logging.info(f"Trade id {trade_id} is {current_status}; skipping positional sync check.")
                 continue
             
             order_status, _, _ = check_order_status(order_id)
-            logging.info(f"Fresh order status for trade {trade_id}: {order_status}")
-                                    
             if order_status == "FAILED":
                 logging.info(f"Trade id {trade_id} order FAILED; marking failed.")
-                exit_time_str = get_current_ist_time().strftime("%H:%M:%S")
                 supabase.table("trade_log").update({
                     "order_status": "failed",
-                    "exit_time": exit_time_str,
+                    "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
                     "exit_price": trade.get("entry_price", 0),
                     "reason": "order_failed"
                 }).eq("id", trade_id).execute()
                 clear_position_cache(trade.get("symbol"), trade.get("option_type"), trade.get("strike"), order_id)
-                changes.append({"trade_id": trade_id, "order_status": "closed"})
                 continue
             
             match = match_broker_position(trade, broker_positions)
             if match:
                 state = match["state"]
                 if state == "open":
-                    logging.info(f"Trade id {trade_id} matched with OPEN broker position.")
                     supabase.table("trade_log").update({
                         "order_status": "open",
                         "exit_time": "00:00:00",
                         "reason": ""
                     }).eq("id", trade_id).execute()
-                    changes.append({"trade_id": trade_id, "order_status": "open"})
-                else:  # closed
+                else:  # CLOSED on Broker
                     logging.info(f"Trade id {trade_id} matched with CLOSED broker position. Marking closed.")
-                    exit_time_str = get_current_ist_time().strftime("%H:%M:%S")
+                    
+                    pos_data = match.get("pos", {})
+                    real_exit_price = float(pos_data.get("sellAvg", 0.0))
+                    real_pnl = float(pos_data.get("realizedProfit", 0.0))
+                    
+                    if real_exit_price == 0: real_exit_price = float(pos_data.get("exitPrice", 0.0))
+                    if real_exit_price == 0: real_exit_price = float(pos_data.get("ltp", 0.0))
+
+                    
+                    current_db_qty = int(trade.get("quantity") or 0)
+                    lot_size = int(trade.get("lot_size") or 1)
+                    
+                    final_qty_to_save = current_db_qty
+                    if lot_size > 1 and current_db_qty >= lot_size:
+                        final_qty_to_save = current_db_qty // lot_size
+                        logging.info(f"Correcting Quantity on Close: {current_db_qty} -> {final_qty_to_save}")
+                    
                     supabase.table("trade_log").update({
                         "order_status": "closed",
-                        "exit_time": exit_time_str,
-                        "exit_price": trade.get("entry_price", 0),
+                        "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
+                        "exit_price": real_exit_price,
+                        "pnl": real_pnl,
+                        "quantity": final_qty_to_save,  
                         "reason": "broker_position_closed"
                     }).eq("id", trade_id).execute()
+                    
                     clear_position_cache(trade.get("symbol"), trade.get("option_type"), trade.get("strike"), order_id)
                     changes.append({"trade_id": trade_id, "order_status": "closed"})
             else:

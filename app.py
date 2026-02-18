@@ -238,22 +238,17 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
     entry_price = float(open_pos.get('entry_price', 0) or 0)
     
     lot_size = int(open_pos.get('lot_size', 1))
-    qty_multiplier = int(open_pos.get('quantity', 1)) 
-    total_quantity = lot_size * qty_multiplier
+    quantity_db = int(open_pos.get('quantity', 1))
+    total_quantity = lot_size * quantity_db
 
     last_ltp = get_last_ltp(opt_sec_id)
-    
-    if not last_ltp or float(last_ltp) <= 0:
-        pass 
+    current_market_price = 0.0
     
     if last_ltp and float(last_ltp) > 0:
-        exit_price = float(last_ltp)
+        current_market_price = float(last_ltp)
     else:
-        exit_price = entry_price # Agar kuch na mile toh Entry Price hi maan lo (0 se behtar hai)
-
-    
-    pnl = (exit_price - entry_price) * total_quantity
-    
+        current_market_price = entry_price 
+        
     broker_match = check_broker_open_position(
         trading_symbol=trading_symbol, 
         option_type=option_type, 
@@ -264,6 +259,22 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
     
     if broker_match is None or broker_match.get("state") == "closed":
         logging.warning(f"Manual Exit! Position {trading_symbol} NOT found on Broker.")
+        
+        real_exit_price = current_market_price
+        real_pnl = 0.0
+        
+        if broker_match and 'pos' in broker_match:
+            pos_data = broker_match['pos']
+            sell_avg = float(pos_data.get('sellAvg', 0.0))
+            realized_pnl = float(pos_data.get('realizedProfit', 0.0))
+            
+            if sell_avg > 0:
+                real_exit_price = sell_avg
+            if realized_pnl != 0:
+                real_pnl = realized_pnl
+                
+        if real_pnl == 0 and real_exit_price > 0:
+            real_pnl = (real_exit_price - entry_price) * total_quantity
         
         supabase.table("trade_log").update({
             "order_status": "closed",
@@ -277,31 +288,35 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
 
     paper_trade = str(get_setting("paper_trade")).lower() == 'true'
     order_id = ""
-
+    final_exit_price = current_market_price 
+    
     if not paper_trade:
         exit_order_resp = place_order(opt_sec_id, "SELL", total_quantity)
+        
         if exit_order_resp and exit_order_resp.get("orderId"):
             order_id = exit_order_resp.get("orderId")
+            
             avg_p = exit_order_resp.get("averagePrice") or exit_order_resp.get("executed_price")
-            if avg_p:
-                exit_price = float(avg_p)
-                pnl = (exit_price - entry_price) * total_quantity 
+            if avg_p and float(avg_p) > 0:
+                final_exit_price = float(avg_p)
+            else:
+                logging.info("Exit order placed, waiting for execution price update via Polling.")
         else:
             logging.error("Broker Exit Order FAILED.")
             return {"error": "Broker Exit Failed"}, 500
-
     
+    final_pnl = (final_exit_price - entry_price) * total_quantity
+
     supabase.table("trade_log").update({
         "order_status": "closed",
-        "exit_price": float(exit_price),
+        "exit_price": float(final_exit_price),
         "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
         "reason": exit_reason or "webhook_exit",
-        "pnl": float(pnl),
+        "pnl": float(final_pnl),
         "order_id": order_id
     }).eq("id", int(row_id)).execute()
 
-    return {"status": f"Successfully exited {trading_symbol}", "pnl": pnl}, 200
-
+    return {"status": f"Successfully exited {trading_symbol}", "pnl": final_pnl}, 200
 # --- Routes ---
 @app.route('/bot/status')
 def bot_status():
@@ -389,11 +404,8 @@ def update_ltp():
 
 @app.route("/positions/live", methods=["GET"])
 def get_live_positions():
-    # Debugging ke liye hum Date filter hata rahe hain
-    # today = get_current_ist_time().date().isoformat()
-    
     try:
-        # Sirf status check karenge, date nahi
+        
         resp = supabase.table("trade_log").select("*")\
             .in_("order_status", ["open", "pending", "transit"])\
             .in_("trade_type", ["live", "paper"])\
@@ -406,23 +418,19 @@ def get_live_positions():
         all_trades = []
 
     final_positions_list = []
-    
-    # Loop ab bina kisi condition ke chalega
+        
     for trade in all_trades:
         try:
             sec_id = str(trade.get("option_security_id"))
             
-            # LTP fetch logic (Safe Mode)
             current_ltp = 0
             if market_data_cache and sec_id in market_data_cache:
                 current_ltp = market_data_cache.get(sec_id, 0)
             
-            # Data parsing
             entry_price = float(trade.get("entry_price") or 0)
             quantity = int(trade.get("quantity") or 0)
             lot_size = int(trade.get("lot_size") or 0)
             
-            # PnL Calculation
             pnl = 0
             if current_ltp > 0:
                 pnl = (float(current_ltp) - entry_price) * quantity * lot_size
@@ -544,7 +552,17 @@ def webhook():
     if not data:
         result = process_webhook_data(data) 
         return jsonify(result)
-    symbol = data.get('symbol', '').strip().upper().replace('_', '-')
+    raw_symbol = data.get('symbol', '').strip().upper().replace('_', '-')
+    symbol_map = {
+        "CNXFINANCE": "FINNIFTY",
+        "NIFTYBANK": "BANKNIFTY",
+        "CNXBAN": "BANKNIFTY",
+        "NIFTY": "NIFTY",
+        "SENSEX": "SENSEX",
+        "BANKNIFTY": "BANKNIFTY"
+    }
+    symbol = symbol_map.get(raw_symbol, raw_symbol)
+    
     action = data.get('action', '').strip().lower()
     option_type = data.get('option_type', '').strip().upper()
     strike = data.get('strike')
@@ -810,20 +828,53 @@ def webhook():
 def exit_position_api():
     data = request.json
     raw_symbol = data.get("symbol", "")
-    symbol = normalize_symbol(raw_symbol)
+    
+    # Symbol ko clean karo
+    if hasattr(raw_symbol, "upper"):
+        symbol = raw_symbol.upper().strip()
+    else:
+        symbol = str(raw_symbol)
+
     if not symbol:
         return jsonify({"error": "Missing symbol"}), 400
+        
     try:
+        # 1. Pehle sync try karo
         open_pos = find_open_position_with_broker_sync(symbol)  
         if not open_pos:
             return jsonify({"status": "Position already closed"}), 200
 
+        # 2. Exit Logic Run karo
         response, status_code = exit_position_core_logic(symbol)
-        return jsonify(response), status_code
-    except Exception as e:
-        logging.error(f"Error in exit_position_api: {e}", exc_info=True)
-        return jsonify({"error": "Internal error"}), 500
+        
+        if status_code != 200:
+            # Error message ko string bana kar check karte hain
+            error_text = str(response).lower()
+            
+            # Ye specific error code dhoondo jo screenshot mein hai
+            if "no_position_for_reduce_only" in error_text or "insufficient_position" in error_text:
+                print(f"[AUTO-FIX] Ghost Position detected for {symbol}. Force Closing in DB...")
+                
+                try:
+                    # Database se position hata do
+                    from helper import log_order_exit 
+                    
+                    # Size aur Price 0 bhej rahe hain kyunki trade toh hai hi nahi
+                    log_order_exit(symbol, 0, 0, reason="SYNC_FIX_LIQUIDATED")
+                    
+                    return jsonify({
+                        "status": "fixed_db", 
+                        "msg": "Position Exchange par nahi thi. Dashboard se hata di gayi."
+                    }), 200
+                except Exception as db_err:
+                    print(f"[FIX FAILED] DB update nahi hua: {db_err}")
 
+        # Agar koi aur error hai toh waisa hi bhejo
+        return jsonify(response), status_code
+
+    except Exception as e:
+        print(f"Error in exit_position_api: {e}")
+        return jsonify({"error": "Internal error"}), 500
 
 @app.route("/settings", methods=["GET", "POST"])
 @authenticate(admin_only=True)
@@ -856,55 +907,69 @@ def manage_settings():
 
 @app.route("/dashboard/summary", methods=["GET"])
 def dashboard_summary():
-    import ws_client
-    today = datetime.now().date().isoformat()
-    resp = supabase.table("trade_log").select("*").eq("timestamp", today).execute()
-    live_trades = resp.data or []
-    live_ltps = {}
-    for trade in live_trades:
-        sec_id = trade.get('option_security_id')
-        if sec_id not in live_ltps:
-            try:
-                live_ltps[sec_id] = ws_client.get_last_ltp(sec_id)
-            except Exception:
-                live_ltps[sec_id] = None  
-
-    total_trades = len(live_trades)
-    live_positions = sum(1 for t in live_trades if t.get('order_status') == 'open')
-    closed_positions = sum(1 for t in live_trades if t.get('order_status') == 'closed')
-    closed_pnl = sum(float(t.get('pnl', 0) or 0) for t in live_trades if t.get('order_status') == 'closed')
-    
-    floating_pnl = 0.0
-    
-    for trade in live_trades:
-        if trade.get('order_status') == 'open':
-            current_ltp = live_ltps.get(trade.get('option_security_id'))
-            if current_ltp is not None:
+    try:
+        import ws_client
+        
+        today = get_current_ist_time().strftime("%Y-%m-%d")
+        resp = supabase.table("trade_log").select("*").eq("timestamp", today).execute()
+        live_trades = resp.data or []
+        live_ltps = {}
+        for trade in live_trades:
+            sec_id = trade.get('option_security_id')
+            if sec_id and sec_id not in live_ltps and trade.get('order_status') == 'open':
                 try:
-                    entry_price = float(trade.get('entry_price', 0) or 0)
-                    quantity = int(trade.get('quantity', 0) or 0)
-                    lot_size = int(trade.get('lot_size', 1) or 1)
-                    trade_type = trade.get('trade_type', 'live')
+                    live_ltps[sec_id] = ws_client.get_last_ltp(sec_id)
+                except Exception:
+                    live_ltps[sec_id] = None  
 
-                    if trade_type == "paper":
-                        floating_pnl += (current_ltp - entry_price) * quantity * lot_size
-                    else:
-                        floating_pnl += (current_ltp - entry_price) * quantity
-                except Exception as e:
-                    logging.error(f"Error calculating floating PNL for trade ID {trade.get('id')}: {e}")
+        total_trades = len(live_trades)
     
-    entry_enabled = get_setting("entry_enabled") or 'false'
+        live_positions = 0
+        closed_positions = 0
+        closed_pnl = 0.0
     
-    logging.debug(f"Total Trades: {total_trades}, Live Positions: {live_positions}, Closed Positions: {closed_positions}")
-    logging.debug(f"Closed PnL: {closed_pnl}, Floating PnL: {floating_pnl}")
+        for t in live_trades:
+            status = t.get('order_status')
+            if status == 'open':
+                live_positions += 1
+            else:
+                closed_positions += 1
+                closed_pnl += float(t.get('pnl', 0) or 0)
+        floating_pnl = 0.0
     
-    return jsonify({
-        "total_trades": total_trades,
-        "live_positions": live_positions,
-        "closed_positions": closed_positions,
-        "total_pnl": closed_pnl + floating_pnl,
-        "entry_enabled": entry_enabled
-    })
+        for trade in live_trades:
+            if trade.get('order_status') == 'open':
+                current_ltp = live_ltps.get(trade.get('option_security_id'))
+               
+                if current_ltp is not None and current_ltp > 0:
+                    try:
+                        entry_price = float(trade.get('entry_price', 0) or 0)
+                        quantity = int(trade.get('quantity', 0) or 0)
+                                                                
+                        pnl = (current_ltp - entry_price) * quantity
+                        floating_pnl += pnl
+                        
+                    except Exception as e:
+                        logging.error(f"Error calculating floating PNL: {e}")
+        
+        entry_enabled = get_setting("entry_enabled") or 'false'
+        
+        logging.info(f"Summary -> Closed PnL: {closed_pnl}, Floating: {floating_pnl}, Total: {closed_pnl + floating_pnl}")
+        
+        return jsonify({
+            "total_trades": total_trades,
+            "live_positions": live_positions,
+            "closed_positions": closed_positions,
+            "total_pnl": round(closed_pnl + floating_pnl, 2),
+            "entry_enabled": entry_enabled
+        })
+
+    except Exception as e:
+        logging.error(f"Dashboard Summary Error: {e}")
+        return jsonify({
+            "total_trades": 0, "live_positions": 0, "closed_positions": 0, 
+            "total_pnl": 0.0, "entry_enabled": "false"
+        })
 
 @app.route("/toggle_entry", methods=["POST"])
 def toggle_entry():
