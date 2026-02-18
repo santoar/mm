@@ -179,14 +179,12 @@ def place_order(security_id, txn_type, qty=1):
     access_token = get_setting("dhan_access_token")
     
     ltp, _ = get_best_bid_ask(security_id)
-    
     if not ltp:
         logging.error(f"Order Cancelled: LTP missing for {security_id}")
         return None
     
     buffer_points = 2.0  
-    if ltp < 100:
-        buffer_points = 1.0
+    if ltp < 100: buffer_points = 1.0
 
     if txn_type.upper() == "BUY":
         order_type = "LIMIT"
@@ -201,8 +199,19 @@ def place_order(security_id, txn_type, qty=1):
     year = expiry_date.strftime("%Y") if expiry_date else ""
     strike = get_strike_for_security(security_id)
     option_type = get_option_type_for_security(security_id)
+    if not strike or not option_type or str(strike) == "None":
+        logging.error(f"CRITICAL: Cannot place order. Strike/OptType missing for SecurityID {security_id}")
+        return None
     trading_symbol = make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
 
+    lot_size = get_lot_size_for_security(security_id) or 1
+    final_qty = int(qty)
+    
+    if final_qty < lot_size:
+        final_qty = lot_size
+    
+    if final_qty % lot_size != 0:
+        final_qty = (final_qty // lot_size) * lot_size
     
     url = "https://api.dhan.co/v2/orders"
     headers = {
@@ -219,7 +228,7 @@ def place_order(security_id, txn_type, qty=1):
         "orderType": order_type,
         "validity": "DAY",
         "securityId": str(security_id),
-        "quantity": int(qty),
+        "quantity": final_qty,
         "price": price,
         "tradingSymbol": trading_symbol
     }
@@ -230,7 +239,6 @@ def place_order(security_id, txn_type, qty=1):
         
         if resp_json.get("orderId"):
             executed_price = price if order_type == "LIMIT" else ltp
-            
             resp_json["executed_price"] = executed_price
             resp_json["tradingSymbol"] = trading_symbol
             return resp_json
