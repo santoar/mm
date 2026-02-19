@@ -10,7 +10,7 @@ import requests
 import threading
 import collections
 from flask import Flask
-from shared_objects import market_data_cache
+from shared_objects import market_data_cache, socketio
 from datetime import datetime, date
 from supabase import create_client
 from master_data import (
@@ -33,7 +33,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s: %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout) # Sirf console par bhejo, Cloud Run apne aap handle kar lega
+        logging.StreamHandler(sys.stdout) 
     ],
     force=True
 )
@@ -407,7 +407,12 @@ def check_order_status(order_id):
         
         if response.status_code == 200:
             data = response.json()
-            if isinstance(data, list): data = data[0]
+            if isinstance(data, list): 
+                if len(data) > 0:
+                    data = data[0]
+                else:
+                    logging.warning(f"Dhan returned empty list [] for order {order_id}")
+                    data = {}
             
             if not data or 'orderStatus' not in data:
                 logging.warning(f"Dhan returned success but no order data for {order_id}")
