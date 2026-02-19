@@ -765,6 +765,15 @@ def webhook():
         entry_price = rounded_price 
                 
         lot_size = get_lot_size(symbol, expiry_date, sel_strike, option_type)
+        if not lot_size or lot_size <= 1:
+            if symbol == "FINNIFTY": 
+                lot_size = 60
+            elif symbol == "NIFTY": 
+                lot_size = 65
+            elif symbol == "SENSEX": 
+                lot_size = 10
+            else: 
+                lot_size = 1
         total_quantity = lot_size * quantity
        
         estimated_trade_capital = rounded_price * total_quantity
