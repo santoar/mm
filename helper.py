@@ -282,6 +282,7 @@ def place_order_with_confirmation(security_id, txn_type, qty=1):
 
 def check_order_status_with_interval_and_save(order_id, security_id, txn_type, qty, interval=3, max_retries=50):
     def task():
+        from app import app
         trading_symbol = None
         
         for retry_count in range(max_retries):
