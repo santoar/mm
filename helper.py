@@ -206,20 +206,10 @@ def place_order(security_id, txn_type, qty=1):
         logging.error(f"Symbol generation error: {e}")
         trading_symbol = ""
     
-    lot_size = 1
-    try:
-        lot_size = get_lot_size_for_security(security_id) or 1
-    except:
-        pass
-    
+        
     final_qty = int(qty)
     
-    if final_qty < lot_size:
-        final_qty = lot_size
-    
-    if final_qty % lot_size != 0:
-        final_qty = (final_qty // lot_size) * lot_size
-    
+       
     url = "https://api.dhan.co/v2/orders"
     headers = {
         "Content-Type": "application/json",
