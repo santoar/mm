@@ -284,7 +284,7 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
             "pnl": float(real_pnl)
         }).eq("id", int(row_id)).execute()
         
-        return {"status": "Paper Trade closed DB synced.", "exit_price": exit_price}, 200
+        return {"status": "Paper Trade closed DB synced.", "exit_price": real_exit_price}, 200
 
     paper_trade = str(get_setting("paper_trade")).lower() == 'true'
     order_id = ""
