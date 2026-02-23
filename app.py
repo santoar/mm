@@ -280,8 +280,8 @@ def exit_position_core_logic(symbol, option_type=None, strike=None, pre_checked_
             "order_status": "closed",
             "reason": "manual_exit_sync",
             "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
-            "exit_price": float(exit_price),
-            "pnl": float(pnl)
+            "exit_price": float(real_exit_price),
+            "pnl": float(real_pnl)
         }).eq("id", int(row_id)).execute()
         
         return {"status": "Paper Trade closed DB synced.", "exit_price": exit_price}, 200

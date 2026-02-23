@@ -949,14 +949,14 @@ def match_broker_position(local_trade, broker_positions):
         symbol_ok = (pos_symbol == target_symbol)
         opt_ok = (not target_option_type or pos_option_type == target_option_type)
         strike_ok = is_strike_match
-        secid_ok = (not target_sec_id or pos_sec_id == target_sec_id)
+        
+        is_match = False
+        if target_sec_id and pos_sec_id == target_sec_id:
+            is_match = True  # Agar ID match ho gayi toh naam (None-None) ignore kar do!
+        elif symbol_ok and opt_ok and strike_ok:
+            is_match = True
 
-        logging.info(
-            f"MATCH CHECK => symbol_ok={symbol_ok}, opt_ok={opt_ok}, "
-            f"strike_ok={strike_ok}, secid_ok={secid_ok}"
-        )
-
-        if symbol_ok and opt_ok and strike_ok and secid_ok:
+        if is_match:
             buy_avg = float(pos.get("buyAvg", 0) or pos.get("costPrice", 0) or 0)
             
             if pos_type == "CLOSED" or buy_avg == 0:
@@ -1134,17 +1134,18 @@ def poll_and_update_transit_orders():
             if current_status in ["pending", "transit"]:
                 continue
             
-            order_status, _, _ = check_order_status(order_id)
-            if order_status == "FAILED":
-                logging.info(f"Trade id {trade_id} order FAILED; marking failed.")
-                supabase.table("trade_log").update({
-                    "order_status": "failed",
-                    "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
-                    "exit_price": trade.get("entry_price", 0),
-                    "reason": "order_failed"
-                }).eq("id", trade_id).execute()
-                clear_position_cache(trade.get("symbol"), trade.get("option_type"), trade.get("strike"), order_id)
-                continue
+            if order_id and order_id != "None":
+                order_status, _, _ = check_order_status(order_id)
+                if order_status == "FAILED":
+                    logging.info(f"Trade id {trade_id} order FAILED; marking failed.")
+                    supabase.table("trade_log").update({
+                        "order_status": "failed",
+                        "exit_time": get_current_ist_time().strftime("%H:%M:%S"),
+                        "exit_price": trade.get("entry_price", 0),
+                        "reason": "order_failed"
+                    }).eq("id", trade_id).execute()
+                    clear_position_cache(trade.get("symbol"), trade.get("option_type"), trade.get("strike"), order_id)
+                    continue
             
             match = match_broker_position(trade, broker_positions)
             if match:
