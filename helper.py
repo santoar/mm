@@ -976,18 +976,21 @@ def poll_and_update_transit_orders():
     # 1. Check for Missing Positions (Auto-Sync)
     if broker_positions:
         try:
-            db_trades = supabase.table("trade_log").select("trading_symbol")\
+            db_trades = supabase.table("trade_log").select("trading_symbol, option_security_id")\
                 .eq("order_status", "open").eq("timestamp", today).execute()
+            
             existing_symbols = {row['trading_symbol'] for row in (db_trades.data or [])}
+            existing_sec_ids = {str(row['option_security_id']) for row in (db_trades.data or []) if row.get('option_security_id')}
             
             for pos in broker_positions:
                 p_type = pos.get("positionType", "").upper()
-                qty_shares = int(pos.get("netQty", 0)) # <--- यहाँ नाम qty_shares है
+                qty_shares = int(pos.get("netQty", 0))
                 t_sym = pos.get("tradingSymbol")
-                sec_id = int(pos.get("securityId", 0))
+                sec_id = str(pos.get("securityId", 0))
                 
-                if p_type in ["LONG", "SHORT"] and qty_shares != 0 and t_sym not in existing_symbols:
-                    logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
+                if p_type in ["LONG", "SHORT"] and qty_shares != 0:
+                    if t_sym not in existing_symbols and sec_id not in existing_sec_ids:
+                        logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
                     
                     lot_size = get_lot_size_for_security(sec_id) or 1
                     qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
@@ -1142,13 +1145,19 @@ def poll_and_update_transit_orders():
             if match:
                 state = match["state"]
                 if state == "open":
-                    supabase.table("trade_log").update({
+                    real_sym = match["pos"].get("tradingSymbol")
+                    update_payload = {
                         "order_status": "open",
                         "exit_time": "00:00:00",
                         "reason": ""
-                    }).eq("id", trade_id).execute()
+                    }
+                    if "None" in trade.get("trading_symbol", "") and real_sym:
+                        update_payload["trading_symbol"] = real_sym
+                        update_payload["strike"] = float(match["pos"].get("strikePrice") or 0)
+                        
+                    supabase.table("trade_log").update(update_payload).eq("id", trade_id).execute()
+                    # ----------------------------------------------------------------------------------
                 else:  # CLOSED on Broker
-                    logging.info(f"Trade id {trade_id} matched with CLOSED broker position. Marking closed.")
                     
                     pos_data = match.get("pos", {})
                     real_exit_price = float(pos_data.get("sellAvg", 0.0))
