@@ -977,56 +977,58 @@ def poll_and_update_transit_orders():
     if broker_positions:
         try:
             db_trades = supabase.table("trade_log").select("trading_symbol, option_security_id")\
-                .eq("order_status", "open").eq("timestamp", today).execute()
+                .in_("order_status", ["open", "pending", "transit"]).eq("timestamp", today).execute()
             
-            existing_symbols = {row['trading_symbol'] for row in (db_trades.data or [])}
-            existing_sec_ids = {str(row['option_security_id']) for row in (db_trades.data or []) if row.get('option_security_id')}
+            
+            existing_symbols = {str(row.get('trading_symbol', '')).strip().upper() for row in (db_trades.data or [])}
+            existing_sec_ids = {str(row.get('option_security_id', '')).strip() for row in (db_trades.data or []) if row.get('option_security_id')}            
             
             for pos in broker_positions:
-                p_type = pos.get("positionType", "").upper()
+                p_type = str(pos.get("positionType", "")).upper()
                 qty_shares = int(pos.get("netQty", 0))
-                t_sym = pos.get("tradingSymbol")
-                sec_id = str(pos.get("securityId", 0))
+                t_sym = str(pos.get("tradingSymbol", "")).strip().upper()
+                sec_id = str(pos.get("securityId", 0)).strip()
                 
                 if p_type in ["LONG", "SHORT"] and qty_shares != 0:
+                    
                     if t_sym not in existing_symbols and sec_id not in existing_sec_ids:
                         logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
                     
-                    lot_size = get_lot_size_for_security(sec_id) or 1
-                    qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
-                                                    
-                    parts = t_sym.split('-')
-                    base_sym = parts[0]
-                    strike = 0
-                    o_type = "CE"
-                    try:
-                        strike = float(parts[2]) if len(parts) > 2 else 0
-                        o_type = parts[3] if len(parts) > 3 else "CE"
-                    except: pass
+                        lot_size = get_lot_size_for_security(sec_id) or 1
+                        qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
+                                                                        
+                        parts = pos.get("tradingSymbol", "").split('-')
+                        base_sym = parts[0] if len(parts) > 0 else "UNKNOWN"
+                        strike = 0
+                        o_type = "CE"
+                        try:
+                            strike = float(parts[2]) if len(parts) > 2 else 0
+                            o_type = parts[3] if len(parts) > 3 else "CE"
+                        except: pass
 
-                    new_trade = {
-                        "timestamp": today,
-                        "symbol": base_sym,
-                        "trading_symbol": t_sym,
-                        "option_type": o_type,
-                        "strike": strike,
-                        "quantity": qty_lots,
-                        "lot_size": lot_size,
-                        "trade_type": "live",
-                        "order_status": "open",
-                        "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
-                        "entry_price": float(pos.get("buyAvg") or 0),
-                        "exit_price": 0.0,
-                        "exit_time": "00:00:00",
-                        "reason": "auto_sync",
-                        "option_security_id": int(pos.get("securityId", 0)),
-                        "pnl": 0.0,
-                        # --- FIX IS HERE ---
-                        "capital_used": float(pos.get("buyAvg") or 0) * abs(qty_shares) 
-                        # -------------------
-                    }
-                    save_trade_data_async(new_trade)
-                    existing_symbols.add(t_sym)
+                        new_trade = {
+                            "timestamp": today,
+                            "symbol": base_sym,
+                            "trading_symbol": pos.get("tradingSymbol", ""),
+                            "option_type": o_type,
+                            "strike": strike,
+                            "quantity": qty_lots,
+                            "lot_size": lot_size,
+                            "trade_type": "live",
+                            "order_status": "open",
+                            "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
+                            "entry_price": float(pos.get("buyAvg") or 0),
+                            "exit_price": 0.0,
+                            "exit_time": "00:00:00",
+                            "reason": "auto_sync",
+                            "option_security_id": int(sec_id) if sec_id.isdigit() else 0,
+                            "pnl": 0.0,
+                            "capital_used": float(pos.get("buyAvg") or 0) * abs(qty_shares) 
+                        }
+                        save_trade_data_async(new_trade)
+                        
+                        existing_symbols.add(t_sym)
+                        existing_sec_ids.add(sec_id)
         except Exception as e:
             logging.error(f"Auto-sync error: {e}")
     
