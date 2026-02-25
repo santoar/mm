@@ -775,7 +775,7 @@ def webhook():
             elif symbol == "NIFTY": 
                 lot_size = 65
             elif symbol == "SENSEX": 
-                lot_size = 10
+                lot_size = 20
             else: 
                 lot_size = 1
         total_quantity = lot_size * quantity
