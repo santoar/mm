@@ -635,6 +635,12 @@ def save_or_update_trade_data(data):
     quantity_val = safe_int("quantity", 0)
     lot_size_value = safe_int("lot_size", lot_size_val)
 
+    # --- FIX 1: Quantity ko Shares se wapas Lots mein badlo taaki double multiply na ho ---
+    if lot_size_value > 1 and quantity_val >= lot_size_value:
+        if quantity_val % lot_size_value == 0:
+            quantity_val = quantity_val // lot_size_value
+    # --------------------------------------------------------------------------------------
+
     entry_price_val = safe_float("entry_price", 0.0)
     capital_used_val = 0.0
        
@@ -650,16 +656,29 @@ def save_or_update_trade_data(data):
     option_type = safe_str("option_type", "")
     trading_symbol = data.get("trading_symbol") or make_broker_style_symbol(symbol_raw, expiry, year, strike, option_type)
     base_symbol_only = re.split(r'[-\s]', symbol_raw)[0].upper()
+
+    # --- FIX 2: Agar Strike/Opt Type blank hai toh automatically Trading Symbol se nikal lo ---
+    if trading_symbol and "-" in trading_symbol:
+        parts = trading_symbol.split('-')
+        if len(parts) >= 4:
+            try:
+                if not strike or strike == 0:
+                    strike = float(parts[2])
+                if not option_type:
+                    option_type = parts[3].upper()
+            except:
+                pass
+    # ------------------------------------------------------------------------------------------
     
     base = {
         "timestamp": safe_str("timestamp", get_current_ist_time().strftime("%Y-%m-%d")),
-        "symbol": base_symbol_only,       
+        "symbol": base_symbol_only,        
         "trading_symbol": trading_symbol,
         "option_type": option_type,
         "strike": strike,
         "quantity": quantity_val,
         "lot_size": lot_size_val,
-        "trade_type": trade_type_val,         
+        "trade_type": trade_type_val,          
         "order_status": order_status_val,    
         "entry_time": safe_str("entry_time", get_current_ist_time().strftime("%H:%M:%S")),
         "entry_price": safe_float("entry_price", 0.0),
@@ -671,6 +690,7 @@ def save_or_update_trade_data(data):
         "option_security_id": safe_int("option_security_id", 0),
         "order_id": safe_str("order_id", None),
     }
+    
     if trade_id is None and order_id:
         exists = supabase.table("trade_log").select("id").eq("order_id", order_id).maybe_single().execute()
         if exists and getattr(exists, "data", None):
@@ -715,7 +735,7 @@ def save_or_update_trade_data(data):
             return None
         inserted = response.data[0] if getattr(response, "data", None) else None
         return inserted.get("id") if inserted else None
-
+        
 def save_trade_data_async(data):
     def task():
         try:
