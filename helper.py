@@ -216,11 +216,11 @@ def place_order(security_id, txn_type, qty=1):
         "access-token": get_setting("dhan_access_token"),
         "client-id": get_setting("dhan_client_id"),
     }
-       
+    exch_seg = "BSE_FNO" if trading_symbol and "SENSEX" in trading_symbol.upper() else "NSE_FNO"   
     body = {
         "dhanClientId": client_id,
         "transactionType": txn_type.upper(),
-        "exchangeSegment": "NSE_FNO",
+        "exchangeSegment": exch_seg,
         "productType": "INTRADAY",
         "orderType": order_type,
         "validity": "DAY",
@@ -963,7 +963,7 @@ def match_broker_position(local_trade, broker_positions):
         
         is_match = False
         if target_sec_id and pos_sec_id == target_sec_id:
-            is_match = True  # Agar ID match ho gayi toh naam (None-None) ignore kar do!
+            is_match = True  
         elif symbol_ok and opt_ok and strike_ok:
             is_match = True
 
@@ -993,7 +993,7 @@ def poll_and_update_transit_orders():
     today = get_current_ist_time().strftime("%Y-%m-%d")
     broker_positions = fetch_broker_positions_list()
     
-    # 1. Check for Missing Positions (Auto-Sync)
+    
     if broker_positions:
         try:
             db_trades = supabase.table("trade_log").select("trading_symbol, option_security_id")\
