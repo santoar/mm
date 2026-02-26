@@ -317,7 +317,7 @@ th {
                   <th>Option Type</th>
                   <th>Strike Price</th>
                   <th>Quantity</th>
-                  <th>Lot Size</th>
+                  <th>Lot</th>
 				  <th>Entry Time</th>
                   <th>Used Capital</th>
                   <th>Entry Price</th>
@@ -351,7 +351,7 @@ th {
                   <th>Option Type</th>
                   <th>Strike Price</th>
                   <th>Quantity</th>
-				  <th>Lot Size</th>
+				  <th>Lot</th>
                   <th>Entry Time</th>
                   <th>Exit Time</th>
                   <th>Entry Price</th>
@@ -781,9 +781,11 @@ function createInputField(key, val) {
             <option value="current" ${val === "current" ? "selected" : ""}>current</option>
             <option value="next" ${val === "next" ? "selected" : ""}>next</option>
         </select>`;
-    } else if (key === "expiry_date") {
-        return `<input type="text" id="expiry_date_input" data-key="${key}" value="${val}">`;
-    } else {
+    }
+	else if (key.includes("_expiry")) {
+        return `<input type="text" class="datepicker_input" data-key="${key}" value="${val}" readonly style="cursor: pointer; background: #fff;" placeholder="Select Date">`;
+    } 
+    else {
         return `<input type="text" data-key="${key}" value="${val}">`;
     }
 }
@@ -830,9 +832,11 @@ loadSettingsBtn.addEventListener("click", async () => {
         });
 
         setTimeout(function() {
-            if (document.getElementById("expiry_date_input")) {
-                $("#expiry_date_input").datepicker({
-                    dateFormat: "mm/dd/yy",
+            if ($(".datepicker_input").length > 0) {
+                $(".datepicker_input").datepicker({
+                    dateFormat: "yy-mm-dd", // DB format ke hisaab se YYYY-MM-DD
+                    changeMonth: true,
+                    changeYear: true,
                     onSelect: function(dateText) {
                         $(this).val(dateText);
                     }
