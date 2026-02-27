@@ -892,8 +892,6 @@ def check_broker_open_position(trading_symbol, option_type=None, strike=None, se
         logging.error(f"Error in check_broker_open_position: {e}")
         return None
 
-import re
-
 def normalize_symbol(s):
     if not s: return ""
     s = str(s).upper().strip()
@@ -993,12 +991,10 @@ def poll_and_update_transit_orders():
     today = get_current_ist_time().strftime("%Y-%m-%d")
     broker_positions = fetch_broker_positions_list()
     
-    
     if broker_positions:
         try:
             db_trades = supabase.table("trade_log").select("trading_symbol, option_security_id")\
                 .in_("order_status", ["open", "pending", "transit"]).eq("timestamp", today).execute()
-            
             
             existing_symbols = {str(row.get('trading_symbol', '')).strip().upper() for row in (db_trades.data or [])}
             existing_sec_ids = {str(row.get('option_security_id', '')).strip() for row in (db_trades.data or []) if row.get('option_security_id')}            
@@ -1010,45 +1006,9 @@ def poll_and_update_transit_orders():
                 sec_id = str(pos.get("securityId", 0)).strip()
                 
                 if p_type in ["LONG", "SHORT"] and qty_shares != 0:
-                    
                     if t_sym not in existing_symbols and sec_id not in existing_sec_ids:
-                        logging.info(f"Missing position found: {t_sym}. Auto-syncing to DB...")
-                    
-                        lot_size = get_lot_size_for_security(sec_id) or 1
-                        qty_lots = abs(qty_shares) // lot_size if lot_size > 0 else abs(qty_shares)
-                                                                        
-                        parts = pos.get("tradingSymbol", "").split('-')
-                        base_sym = parts[0] if len(parts) > 0 else "UNKNOWN"
-                        strike = 0
-                        o_type = "CE"
-                        try:
-                            strike = float(parts[2]) if len(parts) > 2 else 0
-                            o_type = parts[3] if len(parts) > 3 else "CE"
-                        except: pass
-
-                        new_trade = {
-                            "timestamp": today,
-                            "symbol": base_sym,
-                            "trading_symbol": pos.get("tradingSymbol", ""),
-                            "option_type": o_type,
-                            "strike": strike,
-                            "quantity": qty_lots,
-                            "lot_size": lot_size,
-                            "trade_type": "live",
-                            "order_status": "open",
-                            "entry_time": get_current_ist_time().strftime("%H:%M:%S"),
-                            "entry_price": float(pos.get("buyAvg") or 0),
-                            "exit_price": 0.0,
-                            "exit_time": "00:00:00",
-                            "reason": "auto_sync",
-                            "option_security_id": int(sec_id) if sec_id.isdigit() else 0,
-                            "pnl": 0.0,
-                            "capital_used": float(pos.get("buyAvg") or 0) * abs(qty_shares) 
-                        }
-                        save_trade_data_async(new_trade)
-                        
-                        existing_symbols.add(t_sym)
-                        existing_sec_ids.add(sec_id)
+                        logging.info(f"Manual or unknown trade found on broker: {t_sym}. Ignoring it.")
+                                            
         except Exception as e:
             logging.error(f"Auto-sync error: {e}")
     
@@ -1173,12 +1133,26 @@ def poll_and_update_transit_orders():
                         "exit_time": "00:00:00",
                         "reason": ""
                     }
-                    if "None" in trade.get("trading_symbol", "") and real_sym:
+                    db_strike = float(trade.get("strike") or 0)
+                    db_opt = str(trade.get("option_type") or "").strip()
+                    db_tsym = str(trade.get("trading_symbol") or "")
+                    
+                    if (db_strike == 0 or db_opt == "" or "None" in db_tsym or "-0-" in db_tsym) and real_sym:
                         update_payload["trading_symbol"] = real_sym
                         update_payload["strike"] = float(match["pos"].get("strikePrice") or 0)
                         
+                        parts = real_sym.split('-')
+                        if len(parts) >= 4:
+                            update_payload["option_type"] = parts[3].upper()
+                            
+                            if update_payload["strike"] == 0:
+                                try: 
+                                    update_payload["strike"] = float(parts[2])
+                                except: 
+                                    pass
+                            
                     supabase.table("trade_log").update(update_payload).eq("id", trade_id).execute()
-                    # ----------------------------------------------------------------------------------
+                    
                 else:  # CLOSED on Broker
                     
                     pos_data = match.get("pos", {})

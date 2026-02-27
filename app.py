@@ -706,9 +706,9 @@ def webhook():
         else:
             opt_sec_id, sel_strike, full_opt_symbol = find_option_security_id_fast(symbol, expiry_date, index_ltp, option_type, strike_sel)
         
-        if not opt_sec_id or sel_strike in [None, 0, "0", ""]:
+        if not opt_sec_id or str(sel_strike).strip().lower() in ["none", "0", "0.0", "", "null"]:
             logging.error(f"❌ Contract fetch failed for {symbol}. Expiry: {expiry_date}, Strike: {sel_strike}")
-            return jsonify({"status": "Failed", "error": "Option contract nahi mila. Order block."}), 200
+            return jsonify({"status": "Failed", "error": "NO Option contract check Expiry Date"}), 200
         
         from shared_objects import market_data_cache
         from ws_client import subscribe_symbols
