@@ -753,24 +753,32 @@ def find_open_position(symbol_or_trading_symbol, option_type=None, strike=None, 
     logging.info(f"Searching DB for: {sym} | Opt: {option_type} | Strike: {strike}")
     
     try:
-        query = supabase.table("trade_log").select("*") \
-            .eq("order_status", "open") \
-            .eq("timestamp", today) \
-            .in_("trade_type", ["live", "paper"]) \
-            .order("id", desc=True) 
+        def execute_query(use_strike=True):
+            query = supabase.table("trade_log").select("*") \
+                .eq("order_status", "open") \
+                .eq("timestamp", today) \
+                .in_("trade_type", ["live", "paper"]) \
+                .order("id", desc=True) 
 
-        if option_type:
-            query = query.eq("option_type", str(option_type).upper())
-                
-        if strike is not None:
-            try:
-                s_val = int(float(strike)) 
-                query = query.eq("strike", s_val)
-            except: 
-                pass
+            if option_type:
+                query = query.eq("option_type", str(option_type).upper())
+                    
+            if use_strike and strike is not None:
+                try:
+                    s_val = int(float(strike)) 
+                    query = query.eq("strike", s_val)
+                except: 
+                    pass
 
-        resp = query.or_(f"symbol.eq.{sym},trading_symbol.eq.{sym}").execute()
-        data = resp.data or []
+            resp = query.or_(f"symbol.eq.{sym},trading_symbol.eq.{sym}").execute()
+            return resp.data or []
+
+        
+        data = execute_query(use_strike=True)
+
+        if not data and strike is not None:
+            logging.info(f"Strict strike {strike} not found. Using Smart Fallback to find open {sym} {option_type}...")
+            data = execute_query(use_strike=False)
 
         if data:
             logging.info(f"Match Found! Row ID: {data[0]['id']} for {data[0]['trading_symbol']}")
@@ -781,7 +789,6 @@ def find_open_position(symbol_or_trading_symbol, option_type=None, strike=None, 
     except Exception as e:
         logging.error(f"DB Search failed for {sym}: {e}")
         return None
-
 
 def find_open_position_with_broker_sync(trading_symbol, option_type=None, today=None):
     trading_symbol = (trading_symbol or "").strip().upper()
