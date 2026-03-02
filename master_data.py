@@ -8,7 +8,7 @@ from functools import lru_cache
 from time_utils import get_current_ist_time, format_ist_time, convert_utc_to_ist
 
 
-MASTER_CSV_FILE = "api-scrip-master-detailed.csv"
+MASTER_CSV_FILE = "/tmp/api-scrip-master-detailed.csv"
 df_master = None
 index_symbol_to_id = {}
 option_symbol_to_id = {}
@@ -29,20 +29,35 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(mes
 
 
 def fetch_live_master_data_direct(url='https://images.dhan.co/api-data/api-scrip-master-detailed.csv'):
+    # Check if file exists and was updated today (using IST to be safe)
     if os.path.exists(MASTER_CSV_FILE):
         last_modified = os.path.getmtime(MASTER_CSV_FILE)
+        # UTC to IST time conversion for file modification check
         last_date = datetime.fromtimestamp(last_modified).date()
-        if last_date == datetime.today().date():
-            logging.debug("Master data updated today.")
+        ist_today = get_current_ist_time().date()
+        
+        if last_date == ist_today:
+            logging.debug("Master data already updated today in /tmp.")
             return
-    logger.info("Downloading master data...")
-    r = requests.get(url)
-    if r.status_code == 200:
-        with open(MASTER_CSV_FILE, "wb") as f:
-            f.write(r.content)
-        logger.info("Master data downloaded.")
-    else:
-        logger.warning(f"Failed to download master data: {r.status_code}")
+
+    logger.info("Downloading master data to /tmp...")
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept': 'text/csv,application/csv'
+    }
+    
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=15) # Added timeout
+        if r.status_code == 200:
+            with open(MASTER_CSV_FILE, "wb") as f:
+                f.write(r.content)
+            logger.info("Master data successfully downloaded and saved to /tmp.")
+        else:
+            logger.error(f"Failed to download master data: {r.status_code} - {r.text[:100]}")
+    except Exception as e:
+         logger.error(f"Exception during master data download: {e}")
 
 def get_expiry_date(symbol="NIFTY"):
     from helper import global_settings_cache
