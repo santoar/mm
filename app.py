@@ -1016,21 +1016,27 @@ print("--- INITIALIZING BOT FOR CLOUD DEPLOYMENT ---")
 with app.app_context():
     try:
         load_master_data(force_reload=True)
-        from ws_client import subscribe_symbols
-        def start_ws_and_subscribe():
-             ws_client.start_ws_loop(app)
-             time.sleep(2) 
-             subscribe_symbols(["13", "51"]) 
-             logging.info("Indices NIFTY & SENSEX subscribed for ATM calculation.")
+        from ws_client import subscribe_symbols, start_ws_thread
         
-        threading.Thread(target=ws_client.start_ws_loop, args=(app,), daemon=True).start()
+        # 1. Jo safe function humne banaya tha usko use karo
+        start_ws_thread(app)
+        
+        # 2. Thoda wait karke Nifty/Sensex subscribe karao
+        def delay_and_subscribe():
+            time.sleep(3) # WS connect hone ka wait
+            subscribe_symbols(["13", "51"]) 
+            logging.info("Indices NIFTY & SENSEX subscribed for ATM calculation.")
+            
+        threading.Thread(target=delay_and_subscribe, daemon=True).start()
+
+        # Baaki tumhare loops
         threading.Thread(target=polling_loop, daemon=True).start()
         threading.Thread(target=expiry_check_loop, daemon=True).start()
         threading.Thread(target=start_atm_cache_updater, args=(120,), daemon=True).start()
+        
         logging.info("All Cloud Background Threads Started.")
     except Exception as e:
         logging.error(f"Error during initialization: {e}")
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
