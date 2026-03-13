@@ -92,12 +92,12 @@ def decode_message(msg_bytes):
             all_index_ids = {str(v) for v in index_symbol_to_id.values() if v}
             
             if sec_str not in last_printed_ltp or last_printed_ltp[sec_str] != ltp:
-                #if sec_str in all_index_ids:
+                if sec_str in all_index_ids:
                     
-                    #name = next((k for k, v in index_symbol_to_id.items() if str(v) == sec_str), "INDEX")
-                    #print(f"{name} ({sec_str}): {ltp:.2f}")
-                #else:
-                    #print(f"OPTION ({sec_str}): {ltp:.2f}")
+                    name = next((k for k, v in index_symbol_to_id.items() if str(v) == sec_str), "INDEX")
+                    print(f"{name} ({sec_str}): {ltp:.2f}")
+                else:
+                    print(f"OPTION ({sec_str}): {ltp:.2f}")
                 last_printed_ltp[sec_str] = ltp
                 
             if socketio:
