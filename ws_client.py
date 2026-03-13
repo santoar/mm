@@ -165,7 +165,15 @@ def start_ws_loop(app):
     loop.run_until_complete(subscribe_and_listen(app)) 
 
 
+ws_thread_started = False
+
 def start_ws_thread(app):
-    print("Starting WebSocket client thread...")
-    t = threading.Thread(target=start_ws_loop, daemon=True)
-    t.start()
+    global ws_thread_started
+    if not ws_thread_started:
+        print("[INFO] Starting WebSocket client thread...")
+        # Yahan par args=(app,) add karna zaroori hai!
+        t = threading.Thread(target=start_ws_loop, args=(app,), daemon=True)
+        t.start()
+        ws_thread_started = True
+    else:
+        print("[INFO] WebSocket thread is already running.")
